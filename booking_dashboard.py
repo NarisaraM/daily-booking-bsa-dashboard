@@ -714,6 +714,7 @@ def write_html_dashboard(week_blocks, generated_at):
     --na: #94a3b8; --na-bg: #f4f6f8; --na-border: #e4e9ef;
     --ink: #1e293b; --muted: #6b7887; --border: #e7ebf0; --band: #f8fafc;
     --accent: #2563eb; --accent-soft: #eef4ff;
+    --row-line: #d7e6f8; --row-alt: #eef5fd; --row-hover: #dfebfc;
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 2px 8px rgba(16,24,40,.05);
   }
   * { box-sizing: border-box; }
@@ -726,8 +727,8 @@ def write_html_dashboard(week_blocks, generated_at):
   header h1 { margin:0; font-size:20px; font-weight:700; color:var(--ink); letter-spacing:-.01em; }
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   header .header-right { display:flex; align-items:center; gap:16px; }
-  header .header-logo { height:36px; width:auto; object-fit:contain; }
-  header .header-clock { text-align:right; border-left:1px solid var(--border); padding-left:16px; }
+  header .header-logo { height:36px; width:auto; object-fit:contain; border-left:1px solid var(--border); padding-left:16px; }
+  header .header-clock { text-align:right; }
   header .header-clock .clock-time { font-size:16px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:.02em; }
   header .header-clock .clock-date { font-size:11.5px; color:var(--muted); font-weight:500; margin-top:1px; }
   .wrap { max-width:1600px; margin:0 auto; padding:24px 28px 40px; }
@@ -751,12 +752,13 @@ def write_html_dashboard(week_blocks, generated_at):
   .week-head .range { font-weight:500; color:var(--muted); font-size:12.5px; }
   .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
-  th, td { padding:11px 14px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); text-align:left; white-space:nowrap; }
+  th, td { padding:11px 14px; border-bottom:1px solid var(--row-line); border-right:1px solid var(--row-line); text-align:left; white-space:nowrap; }
   th:last-child, td:last-child { border-right:none; }
   td.wrap-cell { white-space:normal; min-width:180px; }
-  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; background:var(--band); border-bottom-width:2px; }
-  tbody tr:nth-child(even) { background:#fbfcfe; }
-  tbody tr:hover { background:#eef4ff; }
+  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; background:var(--band); border-bottom:2px solid var(--row-line); }
+  tbody tr:nth-child(odd) { background:#fff; }
+  tbody tr:nth-child(even) { background:var(--row-alt); }
+  tbody tr:hover { background:var(--row-hover); }
   tbody tr:last-child td { border-bottom:none; }
   .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:999px; font-weight:600; font-size:12.5px; border:1px solid transparent; }
   .pill.OK { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-border); }
@@ -781,11 +783,11 @@ def write_html_dashboard(week_blocks, generated_at):
       </div>
     </div>
     <div class="header-right">
-      <img class="header-logo" src="logo.png" alt="Company logo">
       <div class="header-clock">
         <div class="clock-time" id="clockTime">--:--:--</div>
         <div class="clock-date" id="clockDate">Loading...</div>
       </div>
+      <img class="header-logo" src="logo.png" alt="Company logo">
     </div>
   </div>
 </header>

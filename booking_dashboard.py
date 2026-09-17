@@ -681,7 +681,6 @@ def _dashboard_json(week_blocks):
                 "lifting": round(vr["booked_teu"], 2),
                 "pctTeu": round(vr["pct_teu"], 1) if vr["pct_teu"] is not None else None,
                 "status": vr["status"],
-                "weightTon": round(vr["booked_weight_ton"], 1),
                 "ports": [
                     {"port": p["port"], "allo": p["allo"], "actual": round(p["actual"], 2),
                      "pct": round(p["pct"], 1) if p["pct"] is not None else None, "status": p["status"]}
@@ -742,10 +741,12 @@ def write_html_dashboard(week_blocks, generated_at):
   .week-head .range { font-weight:500; color:var(--muted); font-size:12.5px; }
   .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
   table { width:100%; border-collapse:collapse; font-size:13.5px; }
-  th, td { padding:11px 14px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+  th, td { padding:11px 14px; border-bottom:1px solid var(--border); border-right:1px solid var(--border); text-align:left; white-space:nowrap; }
+  th:last-child, td:last-child { border-right:none; }
   td.wrap-cell { white-space:normal; min-width:180px; }
-  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; background:var(--band); }
-  tbody tr:hover { background:#fafbfd; }
+  th { color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; background:var(--band); border-bottom-width:2px; }
+  tbody tr:nth-child(even) { background:#fbfcfe; }
+  tbody tr:hover { background:#eef4ff; }
   tbody tr:last-child td { border-bottom:none; }
   .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:999px; font-weight:600; font-size:12.5px; border:1px solid transparent; }
   .pill.OK { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-border); }
@@ -858,7 +859,6 @@ function render() {
         <td>${row.lifting}</td>
         <td>${pctSpan(row.pctTeu, row.status)}</td>
         <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>${portCellsHtml}
-        <td>${row.weightTon}</td>
       </tr>`;
     });
     if (!rowsHtml) return;
@@ -871,7 +871,7 @@ function render() {
         <table>
           <thead><tr>
             <th>SVC</th><th>Vessel / Voyage</th><th>ETD</th>
-            <th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>${portHeadHtml}<th>Weight (ton)</th>
+            <th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>${portHeadHtml}
           </tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>

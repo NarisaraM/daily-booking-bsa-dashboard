@@ -982,10 +982,11 @@ function render() {
           const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
           const isLast = i === group.ports.length - 1;
           const sAllo = `style="${groupCellStyle(bg, true, false, isLast, false, isLastRow)}"`;
+          const sMid = `style="background:${bg};"`;
           const sPct = `style="${groupCellStyle(bg, false, true, isLast, false, isLastRow)}"`;
-          if (!c) return `<td ${sAllo}>N/A</td><td ${sPct}>N/A</td>`;
+          if (!c) return `<td ${sAllo}>N/A</td><td ${sMid}>-</td><td ${sPct}>N/A</td>`;
           const allo = c.allo === null || c.allo === undefined ? 'N/A' : c.allo;
-          return `<td ${sAllo}>${allo} / ${c.actual}</td><td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
+          return `<td ${sAllo}>${allo}</td><td ${sMid}>${c.actual}</td><td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
         baseCellsHtml = `
         <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
@@ -1010,8 +1011,9 @@ function render() {
         const c = GROUP_COLORS[i % GROUP_COLORS.length];
         const isLast = i === group.ports.length - 1;
         const sFirst = `style="color:#fff;${groupCellStyle(c.head, true, false, isLast, true, false)}"`;
+        const sMid = `style="background:${c.head};color:#fff;"`;
         const sLast = `style="color:#fff;${groupCellStyle(c.head, false, true, isLast, true, false)}"`;
-        return `<th ${sFirst}>${p} Allo / Actual</th><th ${sLast}>${p} %</th>`;
+        return `<th ${sFirst}>${p} Allo</th><th ${sMid}>${p} Actual</th><th ${sLast}>${p} %</th>`;
       }).join('');
     const theadHtml = !group
       ? `<th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>`

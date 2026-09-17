@@ -847,10 +847,10 @@ function getPortCell(row, name) {
 }
 
 const GROUP_COLORS = [
-  {head: '#2E75B6', soft: '#f5f9fe', softAlt: '#e6f0fc'},
-  {head: '#548235', soft: '#f5fbf7', softAlt: '#e4f5eb'},
-  {head: '#BF8F00', soft: '#fdf9ee', softAlt: '#faf0d2'},
-  {head: '#7030A0', soft: '#faf5fd', softAlt: '#f1e2f9'},
+  {head: '#0EA5E9', soft: '#f2faff', softAlt: '#e0f2fe'},
+  {head: '#16A34A', soft: '#f3fbf6', softAlt: '#dcf7e6'},
+  {head: '#DB2777', soft: '#fef4f9', softAlt: '#fbe0ee'},
+  {head: '#7C3AED', soft: '#f9f5fe', softAlt: '#eee0fc'},
 ];
 
 function render() {

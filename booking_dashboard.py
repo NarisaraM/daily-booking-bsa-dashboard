@@ -248,6 +248,15 @@ def verify_teu_formula(sh, idx):
     return checked, mismatches
 
 
+def parse_reefer_qty(raw):
+    """RFCNT holds free-text like "45REx2" (container size x quantity),
+    occasionally with more than one spec in the same cell. Sum every
+    "x<number>" quantity found; blank/non-matching cells count as 0."""
+    if not raw:
+        return 0
+    return sum(int(n) for n in re.findall(r"x\s*(\d+)", str(raw), flags=re.IGNORECASE))
+
+
 def parse_bookings(path):
     """Return one dict per booking line from the master booking export."""
     wb = xlrd.open_workbook(path)
@@ -274,6 +283,7 @@ def parse_bookings(path):
             "pod": str(sh.cell_value(r, idx["POD"]) or "").strip().upper(),
             "teu": float(sh.cell_value(r, idx["TEU"]) or 0),
             "weight_kg": float(sh.cell_value(r, idx["BK Tot Weight"]) or 0),
+            "reefer_qty": parse_reefer_qty(sh.cell_value(r, idx["RFCNT"])),
             "etd": _parse_xls_datetime(etd_raw, wb),
         })
     return rows
@@ -387,6 +397,7 @@ def build_analysis(bookings, sked_lookup, bsa):
         s = sailings.setdefault(key, {
             "svc_from_booking": None, "teu_by_port": defaultdict(float),
             "total_teu": 0.0, "total_weight_kg": 0.0, "etd_from_booking": None,
+            "reefer_by_port": defaultdict(int), "total_reefer": 0,
         })
         if b["svc"] and not s["svc_from_booking"]:
             s["svc_from_booking"] = b["svc"]
@@ -394,6 +405,9 @@ def build_analysis(bookings, sked_lookup, bsa):
         s["teu_by_port"][grp] += b["teu"]
         s["total_teu"] += b["teu"]
         s["total_weight_kg"] += b["weight_kg"]
+        if b["reefer_qty"]:
+            s["reefer_by_port"][grp] += b["reefer_qty"]
+            s["total_reefer"] += b["reefer_qty"]
         if b["etd"] and not s["etd_from_booking"]:
             s["etd_from_booking"] = b["etd"]
 
@@ -410,6 +424,8 @@ def build_analysis(bookings, sked_lookup, bsa):
             "teu_by_port": dict(s["teu_by_port"]),
             "booked_teu": s["total_teu"],
             "booked_weight_ton": s["total_weight_kg"] / WEIGHT_DIVISOR,
+            "reefer_by_port": dict(s["reefer_by_port"]),
+            "total_reefer": s["total_reefer"],
             "slot_share": bool(sked and sked["slot_share"]),
             "slot_share_label": sked["slot_share_label"] if sked else "",
         })
@@ -468,6 +484,8 @@ def build_analysis(bookings, sked_lookup, bsa):
                 "status": status_for(pct_teu),
                 "booked_weight_ton": r["booked_weight_ton"],
                 "ports": ports,
+                "reefer_by_port": r["reefer_by_port"],
+                "total_reefer": r["total_reefer"],
                 "slot_share": r["slot_share"],
                 "slot_share_notes": [r["slot_share_label"]] if r["slot_share"] else [],
             })
@@ -622,6 +640,41 @@ def write_excel_report(week_blocks):
             wsp.column_dimensions[get_column_letter(i)].width = w
         wsp.auto_filter.ref = f"A1:{get_column_letter(len(headers_p))}1"
 
+    # ---- Reefer (Plug) sheet: every sailing that carries at least one
+    # reefer container, broken out by destination port group ----
+    ws3 = wb.create_sheet("Reefer")
+    reefer_ports = [p for p in PORT_GROUPS if p in {
+        p for block in week_blocks for row in block["rows"] for p in row["reefer_by_port"]
+    }] + (["OTHER"] if any("OTHER" in row["reefer_by_port"] for block in week_blocks for row in block["rows"]) else [])
+    headers3 = ["Week", "SVC", "Vessel / Voyage", "ETD", "Total Reefer Qty"] + [f"{p} Reefer Qty" for p in reefer_ports]
+    ws3.append(headers3)
+    for c in range(1, len(headers3) + 1):
+        cell = ws3.cell(row=1, column=c)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws3.freeze_panes = "A2"
+    port_totals = defaultdict(int)
+    grand_total = 0
+    for block in week_blocks:
+        for vessel_row in block["rows"]:
+            if not vessel_row["total_reefer"]:
+                continue
+            etd_str = vessel_row["etd"].strftime("%Y-%m-%d") if vessel_row["etd"] else "N/A"
+            row = [block["label"], vessel_row["svc_raw"], vessel_row["vessel"], etd_str, vessel_row["total_reefer"]]
+            for p in reefer_ports:
+                qty = vessel_row["reefer_by_port"].get(p, 0)
+                row.append(qty)
+                port_totals[p] += qty
+            ws3.append(row)
+            grand_total += vessel_row["total_reefer"]
+    ws3.append(["", "TOTAL", "", "", grand_total] + [port_totals.get(p, 0) for p in reefer_ports])
+    for c in range(1, len(headers3) + 1):
+        ws3.cell(row=ws3.max_row, column=c).font = Font(bold=True)
+    for i, w in enumerate([10, 10, 34, 12, 14] + [14] * len(reefer_ports), start=1):
+        ws3.column_dimensions[get_column_letter(i)].width = w
+    ws3.auto_filter.ref = f"A1:{get_column_letter(len(headers3))}1"
+
     # ---- Alerts sheet ----
     ws2 = wb.create_sheet("Alerts (OVER, FULL)")
     ws2.append(["Week", "SVC", "Vessel / Voyage", "BSA", "ALLO", "LIFTING", "%", "TEU Note", "Status", "Excess TEU"])
@@ -692,8 +745,25 @@ def _dashboard_json(week_blocks):
     return data
 
 
+def _reefer_json(week_blocks):
+    reefer_ports = sorted({p for block in week_blocks for row in block["rows"] for p in row["reefer_by_port"]})
+    rows = []
+    for block in week_blocks:
+        for vr in block["rows"]:
+            if not vr["total_reefer"]:
+                continue
+            rows.append({
+                "week": block["label"], "svc": vr["svc_raw"], "vessel": vr["vessel"],
+                "etd": vr["etd"].strftime("%Y-%m-%d") if vr["etd"] else None,
+                "total": vr["total_reefer"],
+                "ports": {p: vr["reefer_by_port"].get(p, 0) for p in reefer_ports},
+            })
+    return {"ports": reefer_ports, "rows": rows}
+
+
 def write_html_dashboard(week_blocks, generated_at):
     payload = _dashboard_json(week_blocks)
+    reefer_payload = _reefer_json(week_blocks)
     port_groups_js = [{"key": name, "label": label, "ports": ports} for name, label, ports in PORT_SHEET_GROUPS]
     total_rows = sum(len(b["rows"]) for b in payload)
     counts = defaultdict(int)
@@ -705,7 +775,7 @@ def write_html_dashboard(week_blocks, generated_at):
 <html lang="th">
 <head>
 <meta charset="UTF-8">
-<title>Daily Booking Status Dashboard</title>
+<title>BSA Utilization Report</title>
 <style>
   :root {
     --ok: #15803d; --ok-bg: #ecfdf3; --ok-border: #bbf0cd;
@@ -723,7 +793,7 @@ def write_html_dashboard(week_blocks, generated_at):
   header { background:#fff; border-bottom:1px solid var(--border); padding:18px 28px; }
   header .header-inner { max-width:1600px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
   header .header-left { display:flex; align-items:center; gap:14px; }
-  header .header-dot { width:10px; height:10px; border-radius:50%; background:var(--accent); flex:none; box-shadow:0 0 0 4px var(--accent-soft); }
+  header .header-dot { font-size:20px; line-height:1; flex:none; }
   header h1 { margin:0; font-size:20px; font-weight:700; color:var(--ink); letter-spacing:-.01em; }
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   header .header-right { display:flex; align-items:center; gap:16px; }
@@ -775,10 +845,10 @@ def write_html_dashboard(week_blocks, generated_at):
 <header>
   <div class="header-inner">
     <div class="header-left">
-      <span class="header-dot"></span>
+      <span class="header-dot">&#x1F6A2;</span>
       <div>
-        <h1>Daily Booking Status Dashboard</h1>
-        <p>Booking vs BSA (Block Space Agreement) &mdash; generated __GENERATED_AT__</p>
+        <h1>BSA Utilization Report</h1>
+        <p>Booking vs BSA - VNSGN - HKHKG - CNXMN - CNSHK - TWKEL - CNSHA - KRPUS - IDJKT -</p>
       </div>
     </div>
     <div class="header-right">
@@ -812,14 +882,17 @@ def write_html_dashboard(week_blocks, generated_at):
     </select>
   </div>
   <div id="weeks"></div>
+  <div id="reeferSection"></div>
 </div>
 <footer>Extraction: openpyxl / xlrd / pdfplumber. Analysis: deterministic Python (no AI). Weeks run Monday&ndash;Sunday.</footer>
 
 <script id="dashboard-data" type="application/json">__DATA_JSON__</script>
 <script id="port-groups-data" type="application/json">__PORT_GROUPS_JSON__</script>
+<script id="reefer-data" type="application/json">__REEFER_JSON__</script>
 <script>
 const DATA = JSON.parse(document.getElementById('dashboard-data').textContent);
 const PORT_GROUPS = JSON.parse(document.getElementById('port-groups-data').textContent);
+const REEFER = JSON.parse(document.getElementById('reefer-data').textContent);
 
 function pill(status, text) {
   const cls = status.replace('/', '-');
@@ -954,6 +1027,39 @@ document.getElementById('portSelect').addEventListener('change', render);
 document.getElementById('statusFilter').addEventListener('change', render);
 render();
 
+function renderReefer() {
+  const root = document.getElementById('reeferSection');
+  if (!REEFER.rows.length) {
+    root.innerHTML = '';
+    return;
+  }
+  const portHeads = REEFER.ports.map(p => `<th>${p} Qty</th>`).join('');
+  const rowsHtml = REEFER.rows.map(r => {
+    const portCells = REEFER.ports.map(p => `<td>${r.ports[p] || 0}</td>`).join('');
+    return `<tr>
+      <td>${r.week}</td>
+      <td>${r.svc}</td>
+      <td class="wrap-cell">${r.vessel}</td>
+      <td>${r.etd || 'N/A'}</td>
+      <td><strong>${r.total}</strong></td>
+      ${portCells}
+    </tr>`;
+  }).join('');
+  root.innerHTML = `
+    <div class="week">
+      <div class="week-head"><span>&#x2744;&#xFE0F; Reefer (Plug) Bookings</span><span class="range">Every sailing carrying at least one reefer container</span></div>
+      <div class="table-scroll">
+      <table>
+        <thead><tr>
+          <th>Week</th><th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>Total Reefer Qty</th>${portHeads}
+        </tr></thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+      </div>
+    </div>`;
+}
+renderReefer();
+
 function tickClock() {
   const now = new Date();
   const timeFmt = new Intl.DateTimeFormat('en-US', {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
@@ -976,6 +1082,7 @@ setInterval(tickClock, 1000);
     html = html.replace("__PORT_OPTIONS__", port_options)
     html = html.replace("__DATA_JSON__", json.dumps(payload, ensure_ascii=False))
     html = html.replace("__PORT_GROUPS_JSON__", json.dumps(port_groups_js, ensure_ascii=False))
+    html = html.replace("__REEFER_JSON__", json.dumps(reefer_payload, ensure_ascii=False))
 
     with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
         f.write(html)

@@ -821,11 +821,15 @@ def write_html_dashboard(week_blocks, generated_at):
   .week-head { padding:14px 20px; background:var(--band); border-bottom:1px solid var(--border); font-weight:700; font-size:14.5px; display:flex; justify-content:space-between; align-items:center; }
   .week-head .range { font-weight:500; color:var(--muted); font-size:12.5px; }
   .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; table-layout:auto; }
   th, td { padding:13px 16px; border-bottom:1px solid var(--row-line); text-align:left; white-space:nowrap; }
   td.wrap-cell { white-space:normal; min-width:180px; }
   td { color:var(--ink); font-weight:500; }
   th { color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em; background:var(--band); border-bottom:1px solid var(--border); }
+  table.compact { width:100%; table-layout:fixed; }
+  table.compact th, table.compact td { padding:10px 8px; font-size:12.5px; white-space:normal; word-break:break-word; }
+  table.compact th { font-size:10px; line-height:1.3; }
+  table.compact td.wrap-cell { min-width:0; }
   tbody tr:nth-child(even) { background:var(--row-alt); }
   tbody tr:hover { background:var(--row-hover); }
   tbody tr:last-child td { border-bottom:none; }
@@ -964,35 +968,41 @@ function render() {
     });
     if (!renderedRows.length) return;
 
+    // In a specific-port view, drop the overall BSA/ALLO/LIFTING/% columns
+    // (already visible in "All ports") and collapse each port's Allo+Actual
+    // into one cell, so the whole picture fits without horizontal scrolling.
     const rowsHtml = renderedRows.map((entry, ri) => {
       const {row, portCells, shade} = entry;
       const isLastRow = ri === renderedRows.length - 1;
       let portCellsHtml = '';
+      let baseCellsHtml;
       if (group) {
         portCellsHtml = group.ports.map((p, i) => {
           const c = portCells[i];
           const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
-          const isFirst = i === 0, isLast = i === group.ports.length - 1;
+          const isLast = i === group.ports.length - 1;
           const sAllo = `style="${groupCellStyle(bg, true, false, isLast, false, isLastRow)}"`;
-          const sMid = `style="background:${bg};"`;
           const sPct = `style="${groupCellStyle(bg, false, true, isLast, false, isLastRow)}"`;
-          if (!c) return `<td ${sAllo}>N/A</td><td ${sMid}>-</td><td ${sPct}>N/A</td>`;
-          return `<td ${sAllo}>${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
-            <td ${sMid}>${c.actual}</td>
-            <td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
+          if (!c) return `<td ${sAllo}>N/A</td><td ${sPct}>N/A</td>`;
+          const allo = c.allo === null || c.allo === undefined ? 'N/A' : c.allo;
+          return `<td ${sAllo}>${allo} / ${c.actual}</td><td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
-      }
-      const notesHtml = row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : '';
-      return `<tr>
+        baseCellsHtml = `
+        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
+        <td>${row.etd || 'N/A'}</td>
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+      } else {
+        baseCellsHtml = `
         <td>${row.svc}</td>
-        <td class="wrap-cell">${row.vessel}${notesHtml}</td>
+        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
         <td>${row.etd || 'N/A'}</td>
         <td>${row.bsaFull === null || row.bsaFull === undefined ? 'N/A' : row.bsaFull}</td>
         <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
         <td>${row.lifting}</td>
         <td>${pctSpan(row.pctTeu, row.status)}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>${portCellsHtml}
-      </tr>`;
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+      }
+      return `<tr>${baseCellsHtml}${portCellsHtml}</tr>`;
     }).join('');
 
     const portHeadHtml = !group ? '' :
@@ -1000,19 +1010,18 @@ function render() {
         const c = GROUP_COLORS[i % GROUP_COLORS.length];
         const isLast = i === group.ports.length - 1;
         const sFirst = `style="color:#fff;${groupCellStyle(c.head, true, false, isLast, true, false)}"`;
-        const sMid = `style="background:${c.head};color:#fff;"`;
         const sLast = `style="color:#fff;${groupCellStyle(c.head, false, true, isLast, true, false)}"`;
-        return `<th ${sFirst}>${p} ALLO</th><th ${sMid}>${p} Actual</th><th ${sLast}>${p} %</th>`;
+        return `<th ${sFirst}>${p} Allo / Actual</th><th ${sLast}>${p} %</th>`;
       }).join('');
+    const theadHtml = !group
+      ? `<th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>`
+      : `<th>Vessel / Voyage</th><th>ETD</th><th>Status</th>${portHeadHtml}`;
     root.insertAdjacentHTML('beforeend', `
       <div class="week">
         <div class="week-head"><span>${block.label}</span><span class="range">${block.range}</span></div>
         <div class="table-scroll">
-        <table>
-          <thead><tr>
-            <th>SVC</th><th>Vessel / Voyage</th><th>ETD</th>
-            <th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>${portHeadHtml}
-          </tr></thead>
+        <table class="${group ? 'compact' : ''}">
+          <thead><tr>${theadHtml}</tr></thead>
           <tbody>${rowsHtml}</tbody>
         </table>
         </div>

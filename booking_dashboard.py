@@ -848,10 +848,10 @@ function getPortCell(row, name) {
 }
 
 const GROUP_COLORS = [
-  {text: '#1d5fd6', headBg: '#eaf2fd', headBorder: '#cfe0fa', soft: '#f5f9fe', softAlt: '#e6f0fc'},
-  {text: '#1f8a53', headBg: '#eafaf1', headBorder: '#c3ecd5', soft: '#f5fbf7', softAlt: '#e4f5eb'},
-  {text: '#a3760a', headBg: '#fdf6e3', headBorder: '#f2e3ad', soft: '#fdf9ee', softAlt: '#faf0d2'},
-  {text: '#8b3fd6', headBg: '#f6eefc', headBorder: '#e6d3f6', soft: '#faf5fd', softAlt: '#f1e2f9'},
+  {head: '#2E75B6', soft: '#f5f9fe', softAlt: '#e6f0fc'},
+  {head: '#548235', soft: '#f5fbf7', softAlt: '#e4f5eb'},
+  {head: '#BF8F00', soft: '#fdf9ee', softAlt: '#faf0d2'},
+  {head: '#7030A0', soft: '#faf5fd', softAlt: '#f1e2f9'},
 ];
 
 function render() {
@@ -897,7 +897,7 @@ function render() {
     const portHeadHtml = !group ? '' :
       group.ports.map((p, i) => {
         const c = GROUP_COLORS[i % GROUP_COLORS.length];
-        const s = `background:${c.headBg};color:${c.text};border-bottom:2px solid ${c.headBorder};`;
+        const s = `background:${c.head};color:#fff;`;
         return `<th style="${s}">${p} ALLO</th><th style="${s}">${p} Actual</th><th style="${s}">${p} %</th>`;
       }).join('');
     root.insertAdjacentHTML('beforeend', `

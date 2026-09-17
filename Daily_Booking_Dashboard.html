@@ -76,7 +76,7 @@
       <span class="header-dot"></span>
       <div>
         <h1>Daily Booking Status Dashboard</h1>
-        <p>Booking vs BSA (Block Space Agreement) &mdash; generated 2026-09-17 11:48</p>
+        <p>Booking vs BSA (Block Space Agreement) &mdash; generated 2026-09-17 11:55</p>
       </div>
     </div>
     <div class="header-right">
@@ -149,10 +149,10 @@ function getPortCell(row, name) {
 }
 
 const GROUP_COLORS = [
-  {text: '#1d5fd6', headBg: '#eaf2fd', headBorder: '#cfe0fa', soft: '#f5f9fe'},
-  {text: '#1f8a53', headBg: '#eafaf1', headBorder: '#c3ecd5', soft: '#f5fbf7'},
-  {text: '#a3760a', headBg: '#fdf6e3', headBorder: '#f2e3ad', soft: '#fdf9ee'},
-  {text: '#8b3fd6', headBg: '#f6eefc', headBorder: '#e6d3f6', soft: '#faf5fd'},
+  {text: '#1d5fd6', headBg: '#eaf2fd', headBorder: '#cfe0fa', soft: '#f5f9fe', softAlt: '#e6f0fc'},
+  {text: '#1f8a53', headBg: '#eafaf1', headBorder: '#c3ecd5', soft: '#f5fbf7', softAlt: '#e4f5eb'},
+  {text: '#a3760a', headBg: '#fdf6e3', headBorder: '#f2e3ad', soft: '#fdf9ee', softAlt: '#faf0d2'},
+  {text: '#8b3fd6', headBg: '#f6eefc', headBorder: '#e6d3f6', soft: '#faf5fd', softAlt: '#f1e2f9'},
 ];
 
 function render() {
@@ -164,21 +164,24 @@ function render() {
 
   DATA.forEach(block => {
     let rowsHtml = '';
+    let rowIndex = 0;
     block.rows.forEach(row => {
+      if (statusFilter && row.status !== statusFilter) return;
       let portCellsHtml = '';
       if (group) {
         const cells = group.ports.map(p => getPortCell(row, p));
         if (!cells.some(Boolean)) return;
+        const shade = rowIndex % 2 === 0 ? 'soft' : 'softAlt';
         portCellsHtml = group.ports.map((p, i) => {
           const c = cells[i];
-          const bg = GROUP_COLORS[i % GROUP_COLORS.length].soft;
+          const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
           if (!c) return `<td style="background:${bg}">N/A</td><td style="background:${bg}">-</td><td style="background:${bg}">N/A</td>`;
           return `<td style="background:${bg}">${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
             <td style="background:${bg}">${c.actual}</td>
             <td style="background:${bg}">${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
       }
-      if (statusFilter && row.status !== statusFilter) return;
+      rowIndex++;
       const notesHtml = row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : '';
       rowsHtml += `<tr>
         <td>${row.svc}</td>

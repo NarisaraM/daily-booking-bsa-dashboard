@@ -860,28 +860,57 @@ function render() {
   const root = document.getElementById('weeks');
   root.innerHTML = '';
 
+  // Builds the style for one cell inside a coloured port-group block: a
+  // small white gap + rounded corner between groups, and (on the header or
+  // the last body row) a rounded outer edge so each group reads as a
+  // soft rounded "chip" rather than a sharp rectangle.
+  function groupCellStyle(bg, isFirstInGroup, isLastInGroup, isLastGroup, roundTop, roundBottom) {
+    let s = `background:${bg};`;
+    if (!isLastGroup && isLastInGroup) s += 'border-right:4px solid #fff;';
+    const tl = roundTop && isFirstInGroup ? '10px' : '0';
+    const tr = roundTop && isLastInGroup ? '10px' : '0';
+    const br = roundBottom && isLastInGroup ? '10px' : '0';
+    const bl = roundBottom && isFirstInGroup ? '10px' : '0';
+    s += `border-radius:${tl} ${tr} ${br} ${bl};`;
+    return s;
+  }
+
   DATA.forEach(block => {
-    let rowsHtml = '';
+    const renderedRows = [];
     let rowIndex = 0;
     block.rows.forEach(row => {
       if (statusFilter && row.status !== statusFilter) return;
-      let portCellsHtml = '';
+      renderedRows.push({row, portCells: null});
       if (group) {
         const cells = group.ports.map(p => getPortCell(row, p));
-        if (!cells.some(Boolean)) return;
-        const shade = rowIndex % 2 === 0 ? 'soft' : 'softAlt';
-        portCellsHtml = group.ports.map((p, i) => {
-          const c = cells[i];
-          const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
-          if (!c) return `<td style="background:${bg}">N/A</td><td style="background:${bg}">-</td><td style="background:${bg}">N/A</td>`;
-          return `<td style="background:${bg}">${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
-            <td style="background:${bg}">${c.actual}</td>
-            <td style="background:${bg}">${pctSpan(c.pct, c.status)}</td>`;
-        }).join('');
+        if (!cells.some(Boolean)) { renderedRows.pop(); return; }
+        renderedRows[renderedRows.length - 1].portCells = cells;
+        renderedRows[renderedRows.length - 1].shade = rowIndex % 2 === 0 ? 'soft' : 'softAlt';
       }
       rowIndex++;
+    });
+    if (!renderedRows.length) return;
+
+    const rowsHtml = renderedRows.map((entry, ri) => {
+      const {row, portCells, shade} = entry;
+      const isLastRow = ri === renderedRows.length - 1;
+      let portCellsHtml = '';
+      if (group) {
+        portCellsHtml = group.ports.map((p, i) => {
+          const c = portCells[i];
+          const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
+          const isFirst = i === 0, isLast = i === group.ports.length - 1;
+          const sAllo = `style="${groupCellStyle(bg, true, false, isLast, false, isLastRow)}"`;
+          const sMid = `style="background:${bg};"`;
+          const sPct = `style="${groupCellStyle(bg, false, true, isLast, false, isLastRow)}"`;
+          if (!c) return `<td ${sAllo}>N/A</td><td ${sMid}>-</td><td ${sPct}>N/A</td>`;
+          return `<td ${sAllo}>${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
+            <td ${sMid}>${c.actual}</td>
+            <td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
+        }).join('');
+      }
       const notesHtml = row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : '';
-      rowsHtml += `<tr>
+      return `<tr>
         <td>${row.svc}</td>
         <td class="wrap-cell">${row.vessel}${notesHtml}</td>
         <td>${row.etd || 'N/A'}</td>
@@ -891,13 +920,16 @@ function render() {
         <td>${pctSpan(row.pctTeu, row.status)}</td>
         <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>${portCellsHtml}
       </tr>`;
-    });
-    if (!rowsHtml) return;
+    }).join('');
+
     const portHeadHtml = !group ? '' :
       group.ports.map((p, i) => {
         const c = GROUP_COLORS[i % GROUP_COLORS.length];
-        const s = `background:${c.head};color:#fff;`;
-        return `<th style="${s}">${p} ALLO</th><th style="${s}">${p} Actual</th><th style="${s}">${p} %</th>`;
+        const isLast = i === group.ports.length - 1;
+        const sFirst = `style="color:#fff;${groupCellStyle(c.head, true, false, isLast, true, false)}"`;
+        const sMid = `style="background:${c.head};color:#fff;"`;
+        const sLast = `style="color:#fff;${groupCellStyle(c.head, false, true, isLast, true, false)}"`;
+        return `<th ${sFirst}>${p} ALLO</th><th ${sMid}>${p} Actual</th><th ${sLast}>${p} %</th>`;
       }).join('');
     root.insertAdjacentHTML('beforeend', `
       <div class="week">

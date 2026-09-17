@@ -479,7 +479,7 @@ def build_analysis(bookings, sked_lookup, bsa):
 
             vessel_rows.append({
                 "lane": r["lane"],
-                "svc_raw": r["svc_raw"] or "UNMAPPED (no SVC/schedule match)",
+                "svc_raw": r["svc_raw"] or "N/A",
                 "vessel": f"{r['vessel_name']} ({r['vsl']} {r['voy']})",
                 "etd": r["etd"],
                 "bsa_full_teu": bsa_total_teu_full,

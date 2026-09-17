@@ -719,11 +719,17 @@ def write_html_dashboard(week_blocks, generated_at):
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust:100%; }
   body { margin:0; background:#f4f6f9; color:var(--ink); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
-  header { background:#fff; border-bottom:1px solid var(--border); padding:22px 28px; }
-  header .header-inner { max-width:1600px; margin:0 auto; display:flex; align-items:center; gap:14px; }
+  header { background:#fff; border-bottom:1px solid var(--border); padding:18px 28px; }
+  header .header-inner { max-width:1600px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+  header .header-left { display:flex; align-items:center; gap:14px; }
   header .header-dot { width:10px; height:10px; border-radius:50%; background:var(--accent); flex:none; box-shadow:0 0 0 4px var(--accent-soft); }
   header h1 { margin:0; font-size:20px; font-weight:700; color:var(--ink); letter-spacing:-.01em; }
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  header .header-right { display:flex; align-items:center; gap:16px; }
+  header .header-logo { height:36px; width:auto; object-fit:contain; }
+  header .header-clock { text-align:right; border-left:1px solid var(--border); padding-left:16px; }
+  header .header-clock .clock-time { font-size:16px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:.02em; }
+  header .header-clock .clock-date { font-size:11.5px; color:var(--muted); font-weight:500; margin-top:1px; }
   .wrap { max-width:1600px; margin:0 auto; padding:24px 28px 40px; }
   .kpis { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:22px; }
   .kpi { position:relative; flex:1; min-width:170px; background:#fff; border:1px solid var(--border); border-radius:16px; padding:18px 20px 16px; box-shadow:var(--shadow); overflow:hidden; }
@@ -767,10 +773,19 @@ def write_html_dashboard(week_blocks, generated_at):
 <body>
 <header>
   <div class="header-inner">
-    <span class="header-dot"></span>
-    <div>
-      <h1>Daily Booking Status Dashboard</h1>
-      <p>Booking vs BSA (Block Space Agreement) &mdash; generated __GENERATED_AT__</p>
+    <div class="header-left">
+      <span class="header-dot"></span>
+      <div>
+        <h1>Daily Booking Status Dashboard</h1>
+        <p>Booking vs BSA (Block Space Agreement) &mdash; generated __GENERATED_AT__</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <img class="header-logo" src="logo.png" alt="Company logo">
+      <div class="header-clock">
+        <div class="clock-time" id="clockTime">--:--:--</div>
+        <div class="clock-date" id="clockDate">Loading...</div>
+      </div>
     </div>
   </div>
 </header>
@@ -902,6 +917,16 @@ function render() {
 document.getElementById('portSelect').addEventListener('change', render);
 document.getElementById('statusFilter').addEventListener('change', render);
 render();
+
+function tickClock() {
+  const now = new Date();
+  const timeFmt = new Intl.DateTimeFormat('en-US', {hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false});
+  const dateFmt = new Intl.DateTimeFormat('en-US', {weekday: 'short', year: 'numeric', month: 'short', day: '2-digit'});
+  document.getElementById('clockTime').textContent = timeFmt.format(now);
+  document.getElementById('clockDate').textContent = dateFmt.format(now);
+}
+tickClock();
+setInterval(tickClock, 1000);
 </script>
 </body>
 </html>

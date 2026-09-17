@@ -58,7 +58,6 @@ Run:
 import glob
 import json
 import os
-import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 
@@ -248,13 +247,16 @@ def verify_teu_formula(sh, idx):
     return checked, mismatches
 
 
-def parse_reefer_qty(raw):
-    """RFCNT holds free-text like "45REx2" (container size x quantity),
-    occasionally with more than one spec in the same cell. Sum every
-    "x<number>" quantity found; blank/non-matching cells count as 0."""
-    if not raw:
+def parse_reefer_qty(rf_flag, c20, c40, c45):
+    """A booking line is a reefer booking when its RF column is filled in
+    (e.g. "RF// MIN:-18.0 MAX:-18.0 [COVER:CLOSE]") -- RFCNT is a free-text
+    note that's only sporadically filled in (e.g. "45REx2") and is NOT a
+    reliable signal on its own, but where it IS present its quantity always
+    matches this line's own container count, confirming that every
+    container on an RF-flagged line is a reefer plug."""
+    if not rf_flag:
         return 0
-    return sum(int(n) for n in re.findall(r"x\s*(\d+)", str(raw), flags=re.IGNORECASE))
+    return int(c20 + c40 + c45)
 
 
 def parse_bookings(path):
@@ -276,6 +278,9 @@ def parse_bookings(path):
         if not vsl or not voy:
             continue
         etd_raw = sh.cell_value(r, idx["ETD"])
+        c20 = sh.cell_value(r, idx["C20"]) or 0
+        c40 = sh.cell_value(r, idx["C40"]) or 0
+        c45 = sh.cell_value(r, idx["C45"]) or 0
         rows.append({
             "vsl": str(vsl).strip().upper(),
             "voy": str(voy).strip().upper(),
@@ -283,7 +288,7 @@ def parse_bookings(path):
             "pod": str(sh.cell_value(r, idx["POD"]) or "").strip().upper(),
             "teu": float(sh.cell_value(r, idx["TEU"]) or 0),
             "weight_kg": float(sh.cell_value(r, idx["BK Tot Weight"]) or 0),
-            "reefer_qty": parse_reefer_qty(sh.cell_value(r, idx["RFCNT"])),
+            "reefer_qty": parse_reefer_qty(sh.cell_value(r, idx["RF"]), c20, c40, c45),
             "etd": _parse_xls_datetime(etd_raw, wb),
         })
     return rows

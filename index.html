@@ -23,12 +23,16 @@
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   .wrap { max-width:1600px; margin:0 auto; padding:24px 28px 40px; }
   .kpis { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:22px; }
-  .kpi { flex:1; min-width:160px; background:#fff; border:1px solid var(--border); border-left:4px solid var(--border); border-radius:14px; padding:16px 20px; box-shadow:var(--shadow); }
-  .kpi .num { font-size:28px; font-weight:700; line-height:1.2; }
-  .kpi .lbl { font-size:12.5px; color:var(--muted); margin-top:3px; font-weight:500; }
-  .kpi.ok { border-left-color:var(--ok); } .kpi.ok .num { color:var(--ok); }
-  .kpi.over { border-left-color:var(--over); } .kpi.over .num { color:var(--over); }
-  .kpi.full { border-left-color:var(--full); } .kpi.full .num { color:var(--full); }
+  .kpi { position:relative; flex:1; min-width:170px; background:#fff; border:1px solid var(--border); border-radius:16px; padding:18px 20px 16px; box-shadow:var(--shadow); overflow:hidden; }
+  .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:5px; background:linear-gradient(90deg, var(--c1), var(--c2)); }
+  .kpi::after { content:''; position:absolute; width:96px; height:96px; border-radius:50%; top:-44px; right:-32px; background:var(--c1); opacity:.09; }
+  .kpi-icon { position:relative; width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; background:var(--c1-soft); margin-bottom:12px; }
+  .kpi .num { position:relative; font-size:28px; font-weight:700; line-height:1.2; }
+  .kpi .lbl { position:relative; font-size:12.5px; color:var(--muted); margin-top:3px; font-weight:600; }
+  .kpi.total { --c1:#2563eb; --c2:#7dabfb; --c1-soft:var(--accent-soft); }
+  .kpi.ok { --c1:#15803d; --c2:#5fd68a; --c1-soft:var(--ok-bg); } .kpi.ok .num { color:var(--ok); }
+  .kpi.full { --c1:#1d4ed8; --c2:#7dabfb; --c1-soft:var(--full-bg); } .kpi.full .num { color:var(--full); }
+  .kpi.over { --c1:#c0392b; --c2:#f18f85; --c1-soft:var(--over-bg); } .kpi.over .num { color:var(--over); }
   .controls { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 16px; box-shadow:var(--shadow); }
   .controls label { font-size:13px; color:var(--muted); font-weight:500; }
   select { padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:13.5px; background:#fff; color:var(--ink); cursor:pointer; }
@@ -63,16 +67,16 @@
     <span class="header-dot"></span>
     <div>
       <h1>Daily Booking Status Dashboard</h1>
-      <p>Booking vs BSA (Block Space Agreement) &mdash; generated 2026-09-17 11:31</p>
+      <p>Booking vs BSA (Block Space Agreement) &mdash; generated 2026-09-17 11:36</p>
     </div>
   </div>
 </header>
 <div class="wrap">
   <div class="kpis">
-    <div class="kpi"><div class="num">51</div><div class="lbl">Vessel sailings</div></div>
-    <div class="kpi ok"><div class="num">38</div><div class="lbl">&#x1F7E2; OK</div></div>
-    <div class="kpi full"><div class="num">0</div><div class="lbl">&#x1F535; 100% (Full)</div></div>
-    <div class="kpi over"><div class="num">12</div><div class="lbl">&#x1F534; OVER</div></div>
+    <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">51</div><div class="lbl">Vessel sailings</div></div>
+    <div class="kpi ok"><div class="kpi-icon">&#x1F7E2;</div><div class="num">38</div><div class="lbl">OK</div></div>
+    <div class="kpi full"><div class="kpi-icon">&#x1F535;</div><div class="num">0</div><div class="lbl">100% (Full)</div></div>
+    <div class="kpi over"><div class="kpi-icon">&#x1F534;</div><div class="num">12</div><div class="lbl">OVER</div></div>
   </div>
   <div class="controls">
     <label for="portSelect">View by destination Port (POD):</label>
@@ -127,6 +131,13 @@ function getPortCell(row, name) {
   return row.ports.find(x => x.port === name) || null;
 }
 
+const GROUP_COLORS = [
+  {head: '#2E75B6', soft: '#eaf3fc'},
+  {head: '#548235', soft: '#eef6e8'},
+  {head: '#BF8F00', soft: '#fbf2dd'},
+  {head: '#7030A0', soft: '#f3e9fa'},
+];
+
 function render() {
   const groupKey = document.getElementById('portSelect').value;
   const group = PORT_GROUPS.find(g => g.key === groupKey);
@@ -143,10 +154,11 @@ function render() {
         if (!cells.some(Boolean)) return;
         portCellsHtml = group.ports.map((p, i) => {
           const c = cells[i];
-          if (!c) return '<td>N/A</td><td>-</td><td>N/A</td>';
-          return `<td>${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
-            <td>${c.actual}</td>
-            <td>${pctSpan(c.pct, c.status)}</td>`;
+          const bg = GROUP_COLORS[i % GROUP_COLORS.length].soft;
+          if (!c) return `<td style="background:${bg}">N/A</td><td style="background:${bg}">-</td><td style="background:${bg}">N/A</td>`;
+          return `<td style="background:${bg}">${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
+            <td style="background:${bg}">${c.actual}</td>
+            <td style="background:${bg}">${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
       }
       if (statusFilter && row.status !== statusFilter) return;
@@ -164,7 +176,11 @@ function render() {
     });
     if (!rowsHtml) return;
     const portHeadHtml = !group ? '' :
-      group.ports.map(p => `<th>${p} ALLO</th><th>${p} Actual</th><th>${p} %</th>`).join('');
+      group.ports.map((p, i) => {
+        const c = GROUP_COLORS[i % GROUP_COLORS.length];
+        const s = `background:${c.head};color:#fff;`;
+        return `<th style="${s}">${p} ALLO</th><th style="${s}">${p} Actual</th><th style="${s}">${p} %</th>`;
+      }).join('');
     root.insertAdjacentHTML('beforeend', `
       <div class="week">
         <div class="week-head"><span>${block.label}</span><span class="range">${block.range}</span></div>

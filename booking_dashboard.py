@@ -69,6 +69,9 @@ FOLDER = os.path.dirname(os.path.abspath(__file__))
 INPUT_FOLDER = os.path.join(FOLDER, "input")
 EXCEL_OUTPUT = os.path.join(FOLDER, "Daily_Booking_Status_Report.xlsx")
 HTML_OUTPUT = os.path.join(FOLDER, "Daily_Booking_Dashboard.html")
+# Also published as index.html so GitHub Pages (served from the repo root)
+# always reflects the latest run once pushed.
+INDEX_OUTPUT = os.path.join(FOLDER, "index.html")
 PDF_TEXT_DIR = os.path.join(FOLDER, "pdf_text_extracts")
 
 # BSA.xlsx port columns, in the order they appear in the sheet.
@@ -899,6 +902,8 @@ render();
 
     with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
         f.write(html)
+    with open(INDEX_OUTPUT, "w", encoding="utf-8") as f:
+        f.write(html)
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +938,7 @@ def main():
     print(f"OVER: {over}   FULL: {full}   OK: {total_rows - over - full}")
     print(f"Excel report:    {EXCEL_OUTPUT}")
     print(f"HTML dashboard:  {HTML_OUTPUT}")
+    print(f"                 {INDEX_OUTPUT} (same content, for GitHub Pages)")
 
 
 if __name__ == "__main__":

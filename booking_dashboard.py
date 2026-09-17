@@ -1,0 +1,926 @@
+"""
+Daily Booking Status vs BSA (Block Space Agreement) -- deterministic pipeline.
+
+No AI is used anywhere in this script: extraction is done with the library
+that matches each file's real format, and the BSA comparison is pure
+arithmetic (sum + divide + threshold). This mirrors how the sibling
+"Daily booking" project was built and keeps the numbers 100% reproducible.
+
+All source files live in input/ (BSA.xlsx, the SKED schedule export, the
+master booking export, and any future PDFs) -- drop a new day's exports in
+there (removing or leaving the previous ones; the newest by mtime wins
+either way) and re-run. Only the generated report/dashboard live alongside
+this script itself.
+
+Extraction (each file read with the correct library for its real format):
+  - input/BSA.xlsx           openpyxl   -> BSA per-lane / per-port TEU allocation
+  - input/*SKED*.xls          xlrd       -> vessel schedule (Service, vessel
+                                            code/name, ETD, slot-share flag)
+  - the master booking export xlrd       -> one row per booking line
+                                            (VSL/VOY/POD/TEU/weight/SVC/...),
+                                            auto-detected as the newest
+                                            .xls/.xlsx in input/ that isn't
+                                            BSA.xlsx or the SKED file
+  - any input/*.pdf                       pdfplumber -> raw text only.
+    pdfplumber can only open PDFs (it cannot read .xls/.xlsx binaries), so
+    it is used exclusively for that role. No PDFs ship with this pipeline
+    today, so this step is a no-op unless someone later drops a booking
+    confirmation PDF here -- if they do, its text is dumped to
+    pdf_text_extracts/<name>.txt instead of being silently ignored.
+
+Analysis (pure arithmetic + lookups, no AI):
+  - Each booking's POD is mapped to a BSA port group (VNSGN, HKHKG, CNXMN,
+    CNSHK, TWKEL, KR, JP, RU, IDJKT, CNSHA -- everything else is tracked
+    separately as OTHER/unmapped so it stays visible instead of vanishing).
+  - Each booking's SVC is mapped to a BSA lane (identical to SVC except
+    PCI2 -> PCI, per Report.xlsx's "Master BSA" mapping sheet).
+  - Bookings are grouped by ISO week (Monday-Sunday) of ETD, then by lane:
+    the BSA figures in BSA.xlsx are a per-lane WEEKLY quota, so all
+    sailings of the same lane in the same week share one quota.
+  - Booked TEU = sum of the master file's own TEU column (already verified
+    to implement 20'=1 TEU, 40'/45'=2 TEU for every row in this dataset --
+    see verify_teu_formula() below -- so it is used as-is rather than
+    recomputed).
+  - Status per number: OK (<100%), FULL (==100%), OVER (>100%).
+  - BSA.xlsx carries no weight ceiling, so Total Booked Weight is reported
+    as an informational figure only (no OK/OVER/FULL judgement).
+
+Output (in this same folder):
+  - Daily_Booking_Status_Report.xlsx  -- colour-coded Excel report
+  - Daily_Booking_Dashboard.html      -- self-contained interactive
+                                          dashboard, filterable by
+                                          destination port, opens in any
+                                          browser (double-click, no server)
+
+Run:
+    python booking_dashboard.py
+"""
+import glob
+import json
+import os
+import re
+from collections import defaultdict
+from datetime import datetime, timedelta
+
+import openpyxl
+import xlrd
+
+FOLDER = os.path.dirname(os.path.abspath(__file__))
+INPUT_FOLDER = os.path.join(FOLDER, "input")
+EXCEL_OUTPUT = os.path.join(FOLDER, "Daily_Booking_Status_Report.xlsx")
+HTML_OUTPUT = os.path.join(FOLDER, "Daily_Booking_Dashboard.html")
+PDF_TEXT_DIR = os.path.join(FOLDER, "pdf_text_extracts")
+
+# BSA.xlsx port columns, in the order they appear in the sheet.
+PORT_GROUPS = ["VNSGN", "HKHKG", "CNXMN", "CNSHK", "TWKEL", "KR", "JP", "RU", "IDJKT", "CNSHA"]
+DIRECT_POD_GROUPS = {"VNSGN", "HKHKG", "CNXMN", "CNSHK", "TWKEL", "CNSHA", "IDJKT"}
+
+# Raw SVC code (as it appears in the booking/schedule files) -> BSA lane
+# label (as it appears in BSA.xlsx). Identity for every lane except this one
+# (PCI2 is the raw service code; "PCI" is the BSA lane it draws from -- see
+# Report.xlsx's "Master BSA" sheet, which documents this exact mapping).
+SVC_TO_LANE = {"PCI2": "PCI"}
+
+WEIGHT_DIVISOR = 1000.0  # booking weight is in kg; report weight in metric tons
+
+# A vessel flagged in the SKED file's USED column (e.g. "BUY(PCS)") only
+# bought a slot-share of the normal BSA from another carrier, so its usable
+# TEU capacity -- both the total and each individual port's allowance -- is
+# capped at this fraction of the full BSA. Weight is not affected.
+SLOT_SHARE_TEU_FACTOR = 0.6
+
+# ---------------------------------------------------------------------------
+# File discovery
+# ---------------------------------------------------------------------------
+
+def _latest(paths):
+    return max(paths, key=os.path.getmtime)
+
+
+def find_bsa_file():
+    candidates = glob.glob(os.path.join(INPUT_FOLDER, "*BSA*.xls*"))
+    candidates = [p for p in candidates if not os.path.basename(p).startswith("~$")]
+    if not candidates:
+        raise FileNotFoundError(f"No BSA allocation file (name containing 'BSA') found in {INPUT_FOLDER}")
+    return _latest(candidates)
+
+
+def find_sked_file():
+    candidates = [
+        p for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*"))
+        if not os.path.basename(p).startswith("~$") and "sked" in os.path.basename(p).lower()
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No schedule file (name containing 'SKED') found in {INPUT_FOLDER}")
+    return _latest(candidates)
+
+
+def find_master_booking_file():
+    bsa_file = find_bsa_file()
+    sked_file = find_sked_file()
+    excluded_names = {"report.xlsx", os.path.basename(EXCEL_OUTPUT).lower()}
+    candidates = [
+        p for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*"))
+        if not os.path.basename(p).startswith("~$")
+        and p != bsa_file
+        and p != sked_file
+        and os.path.basename(p).lower() not in excluded_names
+    ]
+    if not candidates:
+        raise FileNotFoundError(f"No master booking export found in {INPUT_FOLDER}")
+    return _latest(candidates)
+
+
+def find_pdf_files():
+    return [p for p in glob.glob(os.path.join(INPUT_FOLDER, "*.pdf"))]
+
+
+# ---------------------------------------------------------------------------
+# Extraction -- BSA.xlsx (openpyxl: real .xlsx file)
+# ---------------------------------------------------------------------------
+
+def parse_bsa(path):
+    """Return dict lane -> {"total_teu": float, "ports": {port_group: teu}}."""
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    rows = list(ws.iter_rows(values_only=True))
+    port_header = rows[1]
+    port_cols = {}
+    for c in range(2, len(port_header) - 1):
+        name = port_header[c]
+        if name:
+            port_cols[c] = str(name).strip().upper()
+
+    bsa = {}
+    for row in rows[2:]:
+        lane = row[0]
+        if not lane:
+            continue
+        lane = str(lane).strip().upper()
+        total_teu = float(row[1]) if row[1] else 0.0
+        ports = {}
+        for c, name in port_cols.items():
+            val = row[c] if c < len(row) else None
+            if val:
+                ports[name] = float(val)
+        bsa[lane] = {"total_teu": total_teu, "ports": ports}
+    return bsa
+
+
+# ---------------------------------------------------------------------------
+# Extraction -- schedule file (xlrd: legacy .xls)
+# ---------------------------------------------------------------------------
+
+def _parse_xls_datetime(raw, workbook):
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, (int, float)):
+        try:
+            return xlrd.xldate_as_datetime(raw, workbook.datemode)
+        except Exception:
+            return None
+    text = str(raw).strip()
+    for value, fmt in ((text, "%Y-%m-%d %H:%M"), (text[:10], "%Y-%m-%d")):
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def parse_sked(path):
+    """Return dict (vessel_code, voyage) -> {service, vessel_name, etd, slot_share, slot_share_label}.
+
+    "Vyg Bound" (e.g. "2607N") is used as the voyage key -- it already
+    combines the "Vyg" and "Bound" columns into the same format the master
+    booking file's VOY column uses. A vessel/voyage appears once per
+    port-of-call; the first row wins, since Service/Name/ETD/USED don't
+    vary between a sailing's own port-of-call rows.
+    """
+    wb = xlrd.open_workbook(path)
+    sh = wb.sheet_by_index(0)
+    header = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    idx = {h: c for c, h in enumerate(header)}
+
+    lookup = {}
+    for r in range(1, sh.nrows):
+        code = sh.cell_value(r, idx["Vessel"])
+        voy = sh.cell_value(r, idx["Vyg Bound"])
+        if not code or not voy:
+            continue
+        key = (str(code).strip().upper(), str(voy).strip().upper())
+        if key in lookup:
+            continue
+
+        used = sh.cell_value(r, idx["USED"])
+        lookup[key] = {
+            "service": str(sh.cell_value(r, idx["Service"])).strip().upper(),
+            "vessel_name": str(sh.cell_value(r, idx["Vessel Name"])).strip(),
+            "etd": _parse_xls_datetime(sh.cell_value(r, idx["ETD Date"]), wb),
+            "slot_share": bool(str(used).strip()),
+            "slot_share_label": str(used).strip(),
+        }
+    return lookup
+
+
+# ---------------------------------------------------------------------------
+# Extraction -- master booking export (xlrd: legacy .xls)
+# ---------------------------------------------------------------------------
+
+def verify_teu_formula(sh, idx):
+    """Sanity-check that TEU already implements 20'=1 / 40'-45'=2 for this
+    file, since that's the assumption build_analysis() relies on instead of
+    recomputing TEU from the container-count columns itself."""
+    checked = mismatches = 0
+    for r in range(1, sh.nrows):
+        if not sh.cell_value(r, idx["VSL"]):
+            continue
+        c20 = sh.cell_value(r, idx["C20"]) or 0
+        c40 = sh.cell_value(r, idx["C40"]) or 0
+        c45 = sh.cell_value(r, idx["C45"]) or 0
+        teu = sh.cell_value(r, idx["TEU"]) or 0
+        checked += 1
+        if abs((c20 * 1 + c40 * 2 + c45 * 2) - teu) > 0.01:
+            mismatches += 1
+    return checked, mismatches
+
+
+def parse_bookings(path):
+    """Return one dict per booking line from the master booking export."""
+    wb = xlrd.open_workbook(path)
+    sh = wb.sheet_by_index(0)
+    header = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    idx = {h: c for c, h in enumerate(header)}
+
+    checked, mismatches = verify_teu_formula(sh, idx)
+    if mismatches:
+        print(f"  WARNING: TEU column does not match 20'=1/40'-45'=2 for {mismatches}/{checked} rows "
+              f"-- booked TEU totals may be off. Recompute manually if this grows.")
+
+    rows = []
+    for r in range(1, sh.nrows):
+        vsl = sh.cell_value(r, idx["VSL"])
+        voy = sh.cell_value(r, idx["VOY"])
+        if not vsl or not voy:
+            continue
+        etd_raw = sh.cell_value(r, idx["ETD"])
+        rows.append({
+            "vsl": str(vsl).strip().upper(),
+            "voy": str(voy).strip().upper(),
+            "svc": str(sh.cell_value(r, idx["SVC"]) or "").strip().upper(),
+            "pod": str(sh.cell_value(r, idx["POD"]) or "").strip().upper(),
+            "teu": float(sh.cell_value(r, idx["TEU"]) or 0),
+            "weight_kg": float(sh.cell_value(r, idx["BK Tot Weight"]) or 0),
+            "etd": _parse_xls_datetime(etd_raw, wb),
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Extraction -- any PDFs dropped in input/ (pdfplumber: real PDFs only)
+# ---------------------------------------------------------------------------
+
+def extract_pdf_texts():
+    pdf_paths = find_pdf_files()
+    if not pdf_paths:
+        print("No PDF files found in input/ -- pdfplumber extraction skipped.")
+        return {}
+
+    import pdfplumber  # imported lazily so the rest of the script works without it installed
+
+    texts = {}
+    os.makedirs(PDF_TEXT_DIR, exist_ok=True)
+    for path in pdf_paths:
+        name = os.path.basename(path)
+        with pdfplumber.open(path) as pdf:
+            text = "\n\n".join(page.extract_text() or "" for page in pdf.pages)
+        texts[name] = text
+        out_path = os.path.join(PDF_TEXT_DIR, os.path.splitext(name)[0] + ".txt")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"  Extracted text from {name} -> {out_path} ({len(text)} chars)")
+    return texts
+
+
+# ---------------------------------------------------------------------------
+# Mapping helpers
+# ---------------------------------------------------------------------------
+
+def pod_group(pod):
+    pod = (pod or "").strip().upper()
+    if pod in DIRECT_POD_GROUPS:
+        return pod
+    if pod.startswith("KR"):
+        return "KR"
+    if pod.startswith("JP"):
+        return "JP"
+    if pod.startswith("RU"):
+        return "RU"
+    return "OTHER"
+
+
+def resolve_lane(svc):
+    svc = (svc or "").strip().upper()
+    return SVC_TO_LANE.get(svc, svc)
+
+
+def monday_of(dt):
+    d = dt.date() if isinstance(dt, datetime) else dt
+    return d - timedelta(days=d.weekday())
+
+
+def status_for(pct):
+    if pct is None:
+        return "N/A"
+    if abs(pct - 100.0) < 1e-6:
+        return "FULL"
+    if pct > 100.0:
+        return "OVER"
+    return "OK"
+
+
+STATUS_ICON = {"OK": "\U0001F7E2", "OVER": "\U0001F534", "FULL": "\U0001F535", "N/A": "⚪"}
+
+# The 5 POD views the report/dashboard offer -- matching the analyst's
+# original Report.xlsx tab layout exactly: some destinations get their own
+# tab, others are grouped together with their ALLO/Actual/% shown side by
+# side. (sheet_name, dropdown_label, [sub-port names to show]). "TOTAL" is
+# not one of PORT_GROUPS -- it's a synthetic column computed as KR+JP+RU
+# combined, exactly like the original sheet's "TOTAL" column.
+PORT_SHEET_GROUPS = [
+    ("POD - VNSGN", "VNSGN", ["VNSGN"]),
+    ("POD - HKG,CNXMN,CNSHK,TWKEL", "HKG, CNXMN, CNSHK, TWKEL", ["HKHKG", "CNXMN", "CNSHK", "TWKEL"]),
+    ("POD - CNSHA", "CNSHA", ["CNSHA"]),
+    ("POD - IDJKT", "IDJKT", ["IDJKT"]),
+    ("POD - TOTAL,KR,JP,RU", "TOTAL, KR, JP, RU", ["TOTAL", "KR", "JP", "RU"]),
+]
+
+
+def get_port_cell(vessel_row, name):
+    """Return the {allo, actual, pct, status} dict for one sub-port name on a
+    vessel row, or None if that lane has nothing to show for it. "TOTAL" is
+    computed on the fly as KR + JP + RU combined."""
+    if name == "TOTAL":
+        subs = [next((p for p in vessel_row["ports"] if p["port"] == s), None) for s in ("KR", "JP", "RU")]
+        if not any(subs):
+            return None
+        allo_sum = sum((s["allo"] or 0) for s in subs if s)
+        actual_sum = sum((s["actual"] or 0) for s in subs if s)
+        pct = (actual_sum / allo_sum * 100) if allo_sum else None
+        return {"port": "TOTAL", "allo": allo_sum if allo_sum else None, "actual": actual_sum, "pct": pct,
+                "status": status_for(pct) if allo_sum else "N/A"}
+    return next((p for p in vessel_row["ports"] if p["port"] == name), None)
+
+
+# ---------------------------------------------------------------------------
+# Analysis
+# ---------------------------------------------------------------------------
+
+def build_analysis(bookings, sked_lookup, bsa):
+    # Step 1: aggregate booking lines into one record per vessel sailing (VSL+VOY).
+    sailings = {}
+    for b in bookings:
+        key = (b["vsl"], b["voy"])
+        s = sailings.setdefault(key, {
+            "svc_from_booking": None, "teu_by_port": defaultdict(float),
+            "total_teu": 0.0, "total_weight_kg": 0.0, "etd_from_booking": None,
+        })
+        if b["svc"] and not s["svc_from_booking"]:
+            s["svc_from_booking"] = b["svc"]
+        grp = pod_group(b["pod"])
+        s["teu_by_port"][grp] += b["teu"]
+        s["total_teu"] += b["teu"]
+        s["total_weight_kg"] += b["weight_kg"]
+        if b["etd"] and not s["etd_from_booking"]:
+            s["etd_from_booking"] = b["etd"]
+
+    sailing_records = []
+    for (vsl, voy), s in sailings.items():
+        sked = sked_lookup.get((vsl, voy))
+        svc_raw = (sked["service"] if sked else "") or s["svc_from_booking"] or ""
+        lane = resolve_lane(svc_raw) if svc_raw else "UNMAPPED"
+        vessel_name = sked["vessel_name"] if sked else vsl
+        etd = (sked["etd"] if sked else None) or s["etd_from_booking"]
+        sailing_records.append({
+            "vsl": vsl, "voy": voy, "svc_raw": svc_raw, "lane": lane,
+            "vessel_name": vessel_name, "etd": etd,
+            "teu_by_port": dict(s["teu_by_port"]),
+            "booked_teu": s["total_teu"],
+            "booked_weight_ton": s["total_weight_kg"] / WEIGHT_DIVISOR,
+            "slot_share": bool(sked and sked["slot_share"]),
+            "slot_share_label": sked["slot_share_label"] if sked else "",
+        })
+
+    # Step 2: group sailings by ISO week (Mon-Sun) of ETD. Each vessel sailing
+    # gets its own row -- compared against its lane's full BSA quota on its
+    # own, never combined with other vessels of the same lane/week, since the
+    # analysis is per vessel, not per SVC.
+    weeks = defaultdict(list)
+    for rec in sailing_records:
+        week_monday = monday_of(rec["etd"]) if rec["etd"] else None
+        weeks[week_monday].append(rec)
+
+    week_blocks = []
+    for week_monday in sorted(weeks.keys(), key=lambda d: (d is None, d)):
+        if week_monday is None:
+            week_label, week_range = "Unknown week (no ETD)", ""
+        else:
+            iso_week = week_monday.isocalendar()[1]
+            week_sunday = week_monday + timedelta(days=6)
+            week_label = f"Week {iso_week}"
+            week_range = f"{week_monday.isoformat()} - {week_sunday.isoformat()}"
+
+        recs = sorted(weeks[week_monday], key=lambda r: (r["lane"], r["etd"] or datetime.max, r["vessel_name"]))
+
+        vessel_rows = []
+        for r in recs:
+            lane_bsa = bsa.get(r["lane"])
+            teu_factor = SLOT_SHARE_TEU_FACTOR if r["slot_share"] else 1.0
+            bsa_total_teu_full = lane_bsa["total_teu"] if lane_bsa else None
+            bsa_total_teu = bsa_total_teu_full * teu_factor if bsa_total_teu_full is not None else None
+            pct_teu = (r["booked_teu"] / bsa_total_teu * 100) if bsa_total_teu else None
+
+            ports = []
+            for p in PORT_GROUPS + (["OTHER"] if "OTHER" in r["teu_by_port"] else []):
+                allo_full = lane_bsa["ports"].get(p) if lane_bsa else None
+                allo = allo_full * teu_factor if allo_full is not None else None
+                actual = r["teu_by_port"].get(p, 0.0)
+                if allo is None and actual == 0.0:
+                    continue
+                pct = (actual / allo * 100) if allo else None
+                ports.append({
+                    "port": p, "allo": allo, "actual": actual, "pct": pct,
+                    "status": status_for(pct) if allo else "N/A",
+                })
+
+            vessel_rows.append({
+                "lane": r["lane"],
+                "svc_raw": r["svc_raw"] or "UNMAPPED (no SVC/schedule match)",
+                "vessel": f"{r['vessel_name']} ({r['vsl']} {r['voy']})",
+                "etd": r["etd"],
+                "bsa_full_teu": bsa_total_teu_full,
+                "bsa_total_teu": bsa_total_teu,
+                "booked_teu": r["booked_teu"],
+                "pct_teu": pct_teu,
+                "status": status_for(pct_teu),
+                "booked_weight_ton": r["booked_weight_ton"],
+                "ports": ports,
+                "slot_share": r["slot_share"],
+                "slot_share_notes": [r["slot_share_label"]] if r["slot_share"] else [],
+            })
+
+        week_blocks.append({"label": week_label, "range": week_range, "monday": week_monday, "rows": vessel_rows})
+
+    return week_blocks
+
+
+# ---------------------------------------------------------------------------
+# Excel report
+# ---------------------------------------------------------------------------
+
+def _style_header(ws, headers, header_fill, header_font, alt_fill=None, alt_cols=()):
+    from openpyxl.styles import Alignment
+    ws.append(headers)
+    for c in range(1, len(headers) + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.font = header_font
+        cell.fill = alt_fill if (alt_fill and c in alt_cols) else header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.freeze_panes = "A2"
+
+
+def _merge_week_column(ws, start_row, end_row):
+    from openpyxl.styles import Alignment
+    if end_row > start_row:
+        ws.merge_cells(start_row=start_row, start_column=1, end_row=end_row, end_column=1)
+    ws.cell(row=start_row, column=1).alignment = Alignment(horizontal="center", vertical="center")
+
+
+def write_excel_report(week_blocks):
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
+    HEADER_FONT = Font(bold=True, color="FFFFFF")
+    WEEK_LABEL_FILL = PatternFill("solid", fgColor="D9D9D9")
+    FILLS = {
+        "OK": PatternFill("solid", fgColor="C6EFCE"),
+        "OVER": PatternFill("solid", fgColor="FFC7CE"),
+        "FULL": PatternFill("solid", fgColor="BDD7EE"),
+        "N/A": None,
+    }
+
+    wb = openpyxl.Workbook()
+
+    # ---- Main sheet: one row per vessel sailing, overall BSA/ALLO/LIFTING/% ----
+    ws = wb.active
+    ws.title = "Weekly Summary"
+    headers = ["Week", "SVC", "Vessel / Voyage", "ETD", "BSA", "ALLO", "LIFTING", "%", "TEU Note", "Status",
+               "Weight (ton)"]
+    _style_header(ws, headers, HEADER_FILL, HEADER_FONT)
+
+    for block in week_blocks:
+        if not block["rows"]:
+            continue
+        start_row = ws.max_row + 1
+        for vessel_row in block["rows"]:
+            etd_str = vessel_row["etd"].strftime("%Y-%m-%d") if vessel_row["etd"] else "N/A"
+            pct_str = f"{vessel_row['pct_teu']:.1f}%" if vessel_row["pct_teu"] is not None else "N/A"
+            teu_note = f"USE {int(SLOT_SHARE_TEU_FACTOR * 100)}%" if vessel_row["slot_share"] else ""
+            ws.append([
+                block["label"], vessel_row["svc_raw"], vessel_row["vessel"], etd_str,
+                vessel_row["bsa_full_teu"] if vessel_row["bsa_full_teu"] is not None else "N/A",
+                vessel_row["bsa_total_teu"] if vessel_row["bsa_total_teu"] is not None else "N/A",
+                round(vessel_row["booked_teu"], 2), pct_str, teu_note,
+                STATUS_ICON[vessel_row["status"]] + " " + vessel_row["status"],
+                round(vessel_row["booked_weight_ton"], 1),
+            ])
+            r = ws.max_row
+            fill = FILLS.get(vessel_row["status"])
+            if fill:
+                for c in range(1, len(headers) + 1):
+                    ws.cell(row=r, column=c).fill = fill
+            if vessel_row["slot_share"]:
+                ws.cell(row=r, column=9).font = Font(bold=True, color="0000FF")
+        _merge_week_column(ws, start_row, ws.max_row)
+        ws.cell(row=start_row, column=1).fill = WEEK_LABEL_FILL
+
+    for i, w in enumerate([10, 10, 34, 12, 10, 10, 10, 10, 10, 12, 12], start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}1"
+
+    # ---- 5 POD sheets, matching the analyst's original tab layout: some
+    # destinations grouped together with their ALLO/Actual/% side by side ----
+    GROUP_COLORS = ["2E75B6", "548235", "BF8F00", "7030A0"]  # blue, green, gold, purple -- cycled per sub-port
+    for sheet_name, _label, sub_ports in PORT_SHEET_GROUPS:
+        wsp = wb.create_sheet(sheet_name)
+        headers_p = ["Week", "SVC", "Vessel / Voyage", "ETD", "BSA", "ALLO", "LIFTING", "%"]
+        for sp in sub_ports:
+            headers_p += [f"{sp} ALLO", f"{sp} Actual", f"{sp} %"]
+        col_fills = {}
+        for gi, sp in enumerate(sub_ports):
+            color = PatternFill("solid", fgColor=GROUP_COLORS[gi % len(GROUP_COLORS)])
+            base_col = 9 + gi * 3
+            col_fills[base_col] = color
+            col_fills[base_col + 1] = color
+            col_fills[base_col + 2] = color
+        wsp.append(headers_p)
+        for c in range(1, len(headers_p) + 1):
+            cell = wsp.cell(row=1, column=c)
+            cell.font = HEADER_FONT
+            cell.fill = col_fills.get(c, HEADER_FILL)
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        wsp.freeze_panes = "A2"
+
+        for block in week_blocks:
+            rows_for_group = [
+                vr for vr in block["rows"] if any(get_port_cell(vr, sp) for sp in sub_ports)
+            ]
+            if not rows_for_group:
+                continue
+            start_row = wsp.max_row + 1
+            for vessel_row in rows_for_group:
+                etd_str = vessel_row["etd"].strftime("%Y-%m-%d") if vessel_row["etd"] else "N/A"
+                pct_str = f"{vessel_row['pct_teu']:.1f}%" if vessel_row["pct_teu"] is not None else "N/A"
+                row = [
+                    block["label"], vessel_row["svc_raw"], vessel_row["vessel"], etd_str,
+                    vessel_row["bsa_full_teu"] if vessel_row["bsa_full_teu"] is not None else "N/A",
+                    vessel_row["bsa_total_teu"] if vessel_row["bsa_total_teu"] is not None else "N/A",
+                    round(vessel_row["booked_teu"], 2), pct_str,
+                ]
+                port_infos = [get_port_cell(vessel_row, sp) for sp in sub_ports]
+                for info in port_infos:
+                    if info is None:
+                        row += ["N/A", "-", "N/A"]
+                    else:
+                        port_pct_str = f"{info['pct']:.1f}%" if info["pct"] is not None else "N/A"
+                        row += [info["allo"] if info["allo"] is not None else "N/A", round(info["actual"], 2), port_pct_str]
+                wsp.append(row)
+                r = wsp.max_row
+                overall_fill = FILLS.get(vessel_row["status"])
+                if overall_fill:
+                    for c in (5, 6, 7, 8):
+                        wsp.cell(row=r, column=c).fill = overall_fill
+                for gi, info in enumerate(port_infos):
+                    if info is None:
+                        continue
+                    fill = FILLS.get(info["status"])
+                    if fill:
+                        base_col = 9 + gi * 3
+                        for c in (base_col, base_col + 1, base_col + 2):
+                            wsp.cell(row=r, column=c).fill = fill
+                if vessel_row["slot_share"]:
+                    wsp.cell(row=r, column=9).font = Font(bold=True, color="0000FF")
+            _merge_week_column(wsp, start_row, wsp.max_row)
+            wsp.cell(row=start_row, column=1).fill = WEEK_LABEL_FILL
+
+        widths = [10, 10, 34, 12, 10, 10, 10, 10] + [12, 12, 10] * len(sub_ports)
+        for i, w in enumerate(widths, start=1):
+            wsp.column_dimensions[get_column_letter(i)].width = w
+        wsp.auto_filter.ref = f"A1:{get_column_letter(len(headers_p))}1"
+
+    # ---- Alerts sheet ----
+    ws2 = wb.create_sheet("Alerts (OVER, FULL)")
+    ws2.append(["Week", "SVC", "Vessel / Voyage", "BSA", "ALLO", "LIFTING", "%", "TEU Note", "Status", "Excess TEU"])
+    for c in range(1, 11):
+        cell = ws2.cell(row=1, column=c)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+    any_alert = False
+    for block in week_blocks:
+        for vessel_row in block["rows"]:
+            if vessel_row["status"] not in ("OVER", "FULL"):
+                continue
+            any_alert = True
+            excess = (vessel_row["booked_teu"] - vessel_row["bsa_total_teu"]) if vessel_row["bsa_total_teu"] else None
+            teu_note = f"USE {int(SLOT_SHARE_TEU_FACTOR * 100)}%" if vessel_row["slot_share"] else ""
+            ws2.append([
+                block["label"], vessel_row["svc_raw"], vessel_row["vessel"],
+                vessel_row["bsa_full_teu"], vessel_row["bsa_total_teu"], round(vessel_row["booked_teu"], 2),
+                f"{vessel_row['pct_teu']:.1f}%" if vessel_row["pct_teu"] is not None else "N/A",
+                teu_note,
+                STATUS_ICON[vessel_row["status"]] + " " + vessel_row["status"],
+                round(excess, 2) if excess is not None else "N/A",
+            ])
+            fill = FILLS.get(vessel_row["status"])
+            if fill:
+                for c in range(1, 11):
+                    ws2.cell(row=ws2.max_row, column=c).fill = fill
+            if vessel_row["slot_share"]:
+                ws2.cell(row=ws2.max_row, column=8).font = Font(bold=True, color="0000FF")
+    if not any_alert:
+        ws2.append(["No vessel sailing is OVER or FULL this run."])
+    for i, w in enumerate([10, 10, 34, 10, 10, 10, 10, 10, 12, 12], start=1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+
+    wb.save(EXCEL_OUTPUT)
+
+
+# ---------------------------------------------------------------------------
+# HTML dashboard
+# ---------------------------------------------------------------------------
+
+STATUS_COLOR = {"OK": "#1e7e34", "OVER": "#c0392b", "FULL": "#1b5fad", "N/A": "#888888"}
+STATUS_BG = {"OK": "#e6f6ea", "OVER": "#fdecea", "FULL": "#e8f0fb", "N/A": "#f2f2f2"}
+
+
+def _dashboard_json(week_blocks):
+    data = []
+    for block in week_blocks:
+        rows = []
+        for vr in block["rows"]:
+            rows.append({
+                "svc": vr["svc_raw"],
+                "vessel": vr["vessel"],
+                "etd": vr["etd"].strftime("%Y-%m-%d") if vr["etd"] else None,
+                "bsaFull": vr["bsa_full_teu"],
+                "bsaAllo": vr["bsa_total_teu"],
+                "lifting": round(vr["booked_teu"], 2),
+                "pctTeu": round(vr["pct_teu"], 1) if vr["pct_teu"] is not None else None,
+                "status": vr["status"],
+                "weightTon": round(vr["booked_weight_ton"], 1),
+                "ports": [
+                    {"port": p["port"], "allo": p["allo"], "actual": round(p["actual"], 2),
+                     "pct": round(p["pct"], 1) if p["pct"] is not None else None, "status": p["status"]}
+                    for p in vr["ports"]
+                ],
+                "notes": vr["slot_share_notes"],
+            })
+        data.append({"label": block["label"], "range": block["range"], "rows": rows})
+    return data
+
+
+def write_html_dashboard(week_blocks, generated_at):
+    payload = _dashboard_json(week_blocks)
+    port_groups_js = [{"key": name, "label": label, "ports": ports} for name, label, ports in PORT_SHEET_GROUPS]
+    total_rows = sum(len(b["rows"]) for b in payload)
+    counts = defaultdict(int)
+    for b in payload:
+        for row in b["rows"]:
+            counts[row["status"]] += 1
+
+    html = r"""<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<title>Daily Booking Status Dashboard</title>
+<style>
+  :root {
+    --ok: #1e7e34; --ok-bg: #e6f6ea;
+    --over: #c0392b; --over-bg: #fdecea;
+    --full: #1b5fad; --full-bg: #e8f0fb;
+    --na: #888888; --na-bg: #f2f2f2;
+    --ink: #1f2430; --muted: #6b7280; --border: #e3e6ea; --band: #f6f7f9;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#f0f2f5; color:var(--ink); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  header { background:#1f2937; color:#fff; padding:20px 24px; }
+  header h1 { margin:0 0 4px; font-size:20px; }
+  header p { margin:0; color:#cbd2d9; font-size:13px; }
+  html { -webkit-text-size-adjust:100%; }
+  .wrap { max-width:1600px; margin:0 auto; padding:20px; }
+  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:20px; }
+  .kpi { flex:1; min-width:150px; background:#fff; border-radius:10px; padding:14px 18px; box-shadow:0 1px 3px rgba(0,0,0,.08); }
+  .kpi .num { font-size:26px; font-weight:700; }
+  .kpi .lbl { font-size:12px; color:var(--muted); margin-top:2px; }
+  .kpi.ok .num { color:var(--ok); } .kpi.over .num { color:var(--over); } .kpi.full .num { color:var(--full); }
+  .controls { display:flex; gap:10px; align-items:center; margin-bottom:16px; flex-wrap:wrap; }
+  .controls label { font-size:13px; color:var(--muted); }
+  select, input[type=text] { padding:7px 10px; border:1px solid var(--border); border-radius:8px; font-size:14px; background:#fff; }
+  .week { background:#fff; border-radius:12px; margin-bottom:16px; box-shadow:0 1px 3px rgba(0,0,0,.08); overflow:hidden; }
+  .week-head { padding:12px 18px; background:var(--band); font-weight:700; display:flex; justify-content:space-between; cursor:pointer; user-select:none; }
+  .week-head .range { font-weight:400; color:var(--muted); font-size:13px; }
+  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; }
+  th, td { padding:9px 12px; border-bottom:1px solid var(--border); text-align:left; white-space:nowrap; }
+  td.wrap-cell { white-space:normal; min-width:180px; }
+  th { color:var(--muted); font-weight:600; font-size:12px; text-transform:uppercase; letter-spacing:.03em; }
+  tr:last-child td { border-bottom:none; }
+  .pill { display:inline-flex; align-items:center; gap:5px; padding:3px 10px; border-radius:999px; font-weight:600; font-size:12.5px; }
+  .pill.OK { color:var(--ok); background:var(--ok-bg); }
+  .pill.OVER { color:var(--over); background:var(--over-bg); }
+  .pill.FULL { color:var(--full); background:var(--full-bg); }
+  .pill.N-A { color:var(--na); background:var(--na-bg); }
+  .pct-text { font-weight:600; }
+  .pct-text.OK { color:var(--ok); } .pct-text.OVER { color:var(--over); } .pct-text.FULL { color:var(--full); } .pct-text.N-A { color:var(--na); }
+  .note { color:var(--full); font-size:12px; margin-top:4px; }
+  .empty { padding:24px; text-align:center; color:var(--muted); }
+  footer { text-align:center; color:var(--muted); font-size:12px; padding:20px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Daily Booking Status Dashboard</h1>
+  <p>Booking vs BSA (Block Space Agreement) &mdash; generated __GENERATED_AT__</p>
+</header>
+<div class="wrap">
+  <div class="kpis">
+    <div class="kpi"><div class="num">__TOTAL_LANES__</div><div class="lbl">Vessel sailings</div></div>
+    <div class="kpi ok"><div class="num">__COUNT_OK__</div><div class="lbl">&#x1F7E2; OK</div></div>
+    <div class="kpi full"><div class="num">__COUNT_FULL__</div><div class="lbl">&#x1F535; 100% (Full)</div></div>
+    <div class="kpi over"><div class="num">__COUNT_OVER__</div><div class="lbl">&#x1F534; OVER</div></div>
+  </div>
+  <div class="controls">
+    <label for="portSelect">View by destination Port (POD):</label>
+    <select id="portSelect">
+      <option value="__ALL__">All ports (TEU total)</option>
+      __PORT_OPTIONS__
+    </select>
+    <label for="statusFilter">Status:</label>
+    <select id="statusFilter">
+      <option value="">All</option>
+      <option value="OK">OK</option>
+      <option value="FULL">Full (100%)</option>
+      <option value="OVER">Over</option>
+    </select>
+  </div>
+  <div id="weeks"></div>
+</div>
+<footer>Extraction: openpyxl / xlrd / pdfplumber. Analysis: deterministic Python (no AI). Weeks run Monday&ndash;Sunday.</footer>
+
+<script id="dashboard-data" type="application/json">__DATA_JSON__</script>
+<script id="port-groups-data" type="application/json">__PORT_GROUPS_JSON__</script>
+<script>
+const DATA = JSON.parse(document.getElementById('dashboard-data').textContent);
+const PORT_GROUPS = JSON.parse(document.getElementById('port-groups-data').textContent);
+
+function pill(status, text) {
+  const cls = status.replace('/', '-');
+  return `<span class="pill ${cls}">${text}</span>`;
+}
+function pctSpan(pct, status) {
+  const cls = status.replace('/', '-');
+  const text = (pct === null || pct === undefined) ? 'N/A' : pct.toFixed(1) + '%';
+  return `<span class="pct-text ${cls}">${text}</span>`;
+}
+function statusIcon(s) {
+  return {OK: '\u{1F7E2}', OVER: '\u{1F534}', FULL: '\u{1F535}', 'N/A': '⚪'}[s] || '';
+}
+function getPortCell(row, name) {
+  if (name === 'TOTAL') {
+    const subs = ['KR', 'JP', 'RU'].map(s => row.ports.find(x => x.port === s)).filter(Boolean);
+    if (!subs.length) return null;
+    const allo = subs.reduce((a, s) => a + (s.allo || 0), 0);
+    const actual = subs.reduce((a, s) => a + (s.actual || 0), 0);
+    const pct = allo ? (actual / allo * 100) : null;
+    const status = allo ? (pct === 100 ? 'FULL' : (pct > 100 ? 'OVER' : 'OK')) : 'N/A';
+    return {port: 'TOTAL', allo: allo || null, actual, pct, status};
+  }
+  return row.ports.find(x => x.port === name) || null;
+}
+
+function render() {
+  const groupKey = document.getElementById('portSelect').value;
+  const group = PORT_GROUPS.find(g => g.key === groupKey);
+  const statusFilter = document.getElementById('statusFilter').value;
+  const root = document.getElementById('weeks');
+  root.innerHTML = '';
+
+  DATA.forEach(block => {
+    let rowsHtml = '';
+    block.rows.forEach(row => {
+      let portCellsHtml = '';
+      if (group) {
+        const cells = group.ports.map(p => getPortCell(row, p));
+        if (!cells.some(Boolean)) return;
+        portCellsHtml = group.ports.map((p, i) => {
+          const c = cells[i];
+          if (!c) return '<td>N/A</td><td>-</td><td>N/A</td>';
+          return `<td>${c.allo === null || c.allo === undefined ? 'N/A' : c.allo}</td>
+            <td>${c.actual}</td>
+            <td>${pctSpan(c.pct, c.status)}</td>`;
+        }).join('');
+      }
+      if (statusFilter && row.status !== statusFilter) return;
+      const notesHtml = row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : '';
+      rowsHtml += `<tr>
+        <td>${row.svc}</td>
+        <td class="wrap-cell">${row.vessel}${notesHtml}</td>
+        <td>${row.etd || 'N/A'}</td>
+        <td>${row.bsaFull === null || row.bsaFull === undefined ? 'N/A' : row.bsaFull}</td>
+        <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
+        <td>${row.lifting}</td>
+        <td>${pctSpan(row.pctTeu, row.status)}</td>
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>${portCellsHtml}
+        <td>${row.weightTon}</td>
+      </tr>`;
+    });
+    if (!rowsHtml) return;
+    const portHeadHtml = !group ? '' :
+      group.ports.map(p => `<th>${p} ALLO</th><th>${p} Actual</th><th>${p} %</th>`).join('');
+    root.insertAdjacentHTML('beforeend', `
+      <div class="week">
+        <div class="week-head"><span>${block.label}</span><span class="range">${block.range}</span></div>
+        <div class="table-scroll">
+        <table>
+          <thead><tr>
+            <th>SVC</th><th>Vessel / Voyage</th><th>ETD</th>
+            <th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>${portHeadHtml}<th>Weight (ton)</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        </div>
+      </div>`);
+  });
+  if (!root.innerHTML) {
+    root.innerHTML = '<div class="empty">No sailings match this filter.</div>';
+  }
+}
+
+document.getElementById('portSelect').addEventListener('change', render);
+document.getElementById('statusFilter').addEventListener('change', render);
+render();
+</script>
+</body>
+</html>
+"""
+    port_options = "\n      ".join(f'<option value="{g["key"]}">{g["label"]}</option>' for g in port_groups_js)
+    html = html.replace("__GENERATED_AT__", generated_at)
+    html = html.replace("__TOTAL_LANES__", str(total_rows))
+    html = html.replace("__COUNT_OK__", str(counts["OK"]))
+    html = html.replace("__COUNT_FULL__", str(counts["FULL"]))
+    html = html.replace("__COUNT_OVER__", str(counts["OVER"]))
+    html = html.replace("__PORT_OPTIONS__", port_options)
+    html = html.replace("__DATA_JSON__", json.dumps(payload, ensure_ascii=False))
+    html = html.replace("__PORT_GROUPS_JSON__", json.dumps(port_groups_js, ensure_ascii=False))
+
+    with open(HTML_OUTPUT, "w", encoding="utf-8") as f:
+        f.write(html)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    bsa_file = find_bsa_file()
+    sked_file = find_sked_file()
+    master_file = find_master_booking_file()
+    print(f"BSA file:     {os.path.basename(bsa_file)}")
+    print(f"SKED file:    {os.path.basename(sked_file)}")
+    print(f"Master file:  {os.path.basename(master_file)}")
+
+    extract_pdf_texts()  # no-op today; picks up any future PDF drops
+
+    bsa = parse_bsa(bsa_file)
+    sked_lookup = parse_sked(sked_file)
+    bookings = parse_bookings(master_file)
+    print(f"Parsed {len(bookings)} booking lines, {len(sked_lookup)} scheduled sailings, {len(bsa)} BSA lanes.")
+
+    week_blocks = build_analysis(bookings, sked_lookup, bsa)
+
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M")
+    write_excel_report(week_blocks)
+    write_html_dashboard(week_blocks, generated_at)
+
+    total_rows = sum(len(b["rows"]) for b in week_blocks)
+    over = sum(1 for b in week_blocks for r in b["rows"] if r["status"] == "OVER")
+    full = sum(1 for b in week_blocks for r in b["rows"] if r["status"] == "FULL")
+    print(f"\nWrote {total_rows} vessel-sailing rows across {len(week_blocks)} weeks.")
+    print(f"OVER: {over}   FULL: {full}   OK: {total_rows - over - full}")
+    print(f"Excel report:    {EXCEL_OUTPUT}")
+    print(f"HTML dashboard:  {HTML_OUTPUT}")
+
+
+if __name__ == "__main__":
+    main()

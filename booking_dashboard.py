@@ -289,6 +289,8 @@ def parse_bookings(path):
             "teu": float(sh.cell_value(r, idx["TEU"]) or 0),
             "weight_kg": float(sh.cell_value(r, idx["BK Tot Weight"]) or 0),
             "reefer_qty": parse_reefer_qty(sh.cell_value(r, idx["RF"]), c20, c40, c45),
+            "c20": c20,
+            "c40": c40 + c45,
             "etd": _parse_xls_datetime(etd_raw, wb),
         })
     return rows
@@ -390,6 +392,30 @@ def get_port_cell(vessel_row, name):
     return next((p for p in vessel_row["ports"] if p["port"] == name), None)
 
 
+def build_pod_breakdown(pod_detail):
+    """Turn a sailing's {port_group: {c20, c40, teu, raw_pods}} map into the
+    rows for its hover tooltip: label shows the actual POD code when a group
+    (e.g. "KR") only ever saw one real port for this sailing, or "<GROUP> N
+    ports" when it covers several (e.g. "JP 4 ports"), plus a TOTAL row."""
+    rows = []
+    totals = {"c20": 0, "c40": 0, "teu": 0.0}
+    order = PORT_GROUPS + (["OTHER"] if "OTHER" in pod_detail else [])
+    for grp in order:
+        d = pod_detail.get(grp)
+        if not d:
+            continue
+        raw_pods = sorted(d["raw_pods"])
+        label = raw_pods[0] if len(raw_pods) == 1 else f"{grp} ({len(raw_pods)} ports)"
+        rows.append({"label": label, "c20": int(d["c20"]), "c40": int(d["c40"]), "teu": round(d["teu"], 2)})
+        totals["c20"] += d["c20"]
+        totals["c40"] += d["c40"]
+        totals["teu"] += d["teu"]
+    return {
+        "rows": rows,
+        "total": {"c20": int(totals["c20"]), "c40": int(totals["c40"]), "teu": round(totals["teu"], 2)},
+    }
+
+
 # ---------------------------------------------------------------------------
 # Analysis
 # ---------------------------------------------------------------------------
@@ -403,6 +429,8 @@ def build_analysis(bookings, sked_lookup, bsa):
             "svc_from_booking": None, "teu_by_port": defaultdict(float),
             "total_teu": 0.0, "total_weight_kg": 0.0, "etd_from_booking": None,
             "reefer_by_port": defaultdict(int), "total_reefer": 0,
+            "booking_count": 0,
+            "pod_detail": defaultdict(lambda: {"c20": 0, "c40": 0, "teu": 0.0, "raw_pods": set()}),
         })
         if b["svc"] and not s["svc_from_booking"]:
             s["svc_from_booking"] = b["svc"]
@@ -410,6 +438,12 @@ def build_analysis(bookings, sked_lookup, bsa):
         s["teu_by_port"][grp] += b["teu"]
         s["total_teu"] += b["teu"]
         s["total_weight_kg"] += b["weight_kg"]
+        s["booking_count"] += 1
+        detail = s["pod_detail"][grp]
+        detail["c20"] += b["c20"]
+        detail["c40"] += b["c40"]
+        detail["teu"] += b["teu"]
+        detail["raw_pods"].add(b["pod"])
         if b["reefer_qty"]:
             s["reefer_by_port"][grp] += b["reefer_qty"]
             s["total_reefer"] += b["reefer_qty"]
@@ -431,6 +465,8 @@ def build_analysis(bookings, sked_lookup, bsa):
             "booked_weight_ton": s["total_weight_kg"] / WEIGHT_DIVISOR,
             "reefer_by_port": dict(s["reefer_by_port"]),
             "total_reefer": s["total_reefer"],
+            "booking_count": s["booking_count"],
+            "pod_detail": s["pod_detail"],
             "slot_share": bool(sked and sked["slot_share"]),
             "slot_share_label": sked["slot_share_label"] if sked else "",
         })
@@ -480,6 +516,9 @@ def build_analysis(bookings, sked_lookup, bsa):
             vessel_rows.append({
                 "lane": r["lane"],
                 "svc_raw": r["svc_raw"] or "N/A",
+                "vessel_name": r["vessel_name"],
+                "vsl": r["vsl"],
+                "voy": r["voy"],
                 "vessel": f"{r['vessel_name']} ({r['vsl']} {r['voy']})",
                 "etd": r["etd"],
                 "bsa_full_teu": bsa_total_teu_full,
@@ -491,6 +530,8 @@ def build_analysis(bookings, sked_lookup, bsa):
                 "ports": ports,
                 "reefer_by_port": r["reefer_by_port"],
                 "total_reefer": r["total_reefer"],
+                "booking_count": r["booking_count"],
+                "pod_breakdown": build_pod_breakdown(r["pod_detail"]),
                 "slot_share": r["slot_share"],
                 "slot_share_notes": [r["slot_share_label"]] if r["slot_share"] else [],
             })
@@ -733,6 +774,9 @@ def _dashboard_json(week_blocks):
             rows.append({
                 "svc": vr["svc_raw"],
                 "vessel": vr["vessel"],
+                "vesselName": vr["vessel_name"],
+                "vsl": vr["vsl"],
+                "voy": vr["voy"],
                 "etd": vr["etd"].strftime("%Y-%m-%d") if vr["etd"] else None,
                 "bsaFull": vr["bsa_full_teu"],
                 "bsaAllo": vr["bsa_total_teu"],
@@ -745,6 +789,8 @@ def _dashboard_json(week_blocks):
                     for p in vr["ports"]
                 ],
                 "notes": vr["slot_share_notes"],
+                "bookingCount": vr["booking_count"],
+                "podBreakdown": vr["pod_breakdown"],
             })
         data.append({"label": block["label"], "range": block["range"], "rows": rows})
     return data
@@ -831,7 +877,7 @@ def write_html_dashboard(week_blocks, generated_at):
   td.wrap-cell { white-space:normal; min-width:180px; }
   td { color:var(--ink); font-weight:500; }
   th { color:var(--muted); font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; background:var(--band); border-bottom:1px solid var(--border); }
-  table.compact { width:100%; table-layout:fixed; }
+  table.compact { width:100%; min-width:1300px; table-layout:fixed; }
   table.compact th, table.compact td { padding:14px 12px; font-size:19px; white-space:normal; word-break:break-word; }
   table.compact th { font-size:13.5px; line-height:1.3; }
   table.compact td.wrap-cell { min-width:0; }
@@ -848,6 +894,21 @@ def write_html_dashboard(week_blocks, generated_at):
   .note { color:var(--full); font-size:13.5px; margin-top:4px; font-weight:500; }
   .empty { padding:32px; text-align:center; color:var(--muted); background:#fff; border:1px solid var(--border); border-radius:14px; font-size:15px; }
   footer { text-align:center; color:var(--muted); font-size:13.5px; padding:24px; }
+  .tip-cell { cursor:help; }
+  .row-tooltip { display:none; position:fixed; z-index:1000; background:#fff; border-radius:14px; box-shadow:0 12px 32px rgba(16,24,40,.22); overflow:hidden; min-width:260px; max-width:340px; pointer-events:none; }
+  .row-tooltip .tip-head { padding:12px 16px; color:#fff; }
+  .row-tooltip .tip-vessel { font-weight:700; font-size:14.5px; }
+  .row-tooltip .tip-vessel span { font-weight:500; opacity:.85; font-size:13px; margin-left:6px; }
+  .row-tooltip .tip-meta { font-size:12.5px; opacity:.9; margin-top:2px; }
+  .row-tooltip .tip-head.status-OK { background:var(--ok); }
+  .row-tooltip .tip-head.status-OVER { background:var(--over); }
+  .row-tooltip .tip-head.status-FULL { background:var(--full); }
+  .row-tooltip .tip-head.status-N-A { background:var(--na); }
+  .row-tooltip table { width:100%; border-collapse:collapse; font-size:13px; }
+  .row-tooltip th { text-align:left; padding:8px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:var(--band); }
+  .row-tooltip td { padding:7px 16px; border-top:1px solid var(--row-line); }
+  .row-tooltip th:not(:first-child), .row-tooltip td:not(:first-child) { text-align:right; }
+  .row-tooltip tfoot td { font-weight:700; border-top:2px solid var(--border); color:var(--ink); }
 </style>
 </head>
 <body>
@@ -895,6 +956,7 @@ def write_html_dashboard(week_blocks, generated_at):
   <div id="reeferSection"></div>
 </div>
 <footer>Extraction: openpyxl / xlrd / pdfplumber. Analysis: deterministic Python (no AI). Weeks run Monday&ndash;Sunday.</footer>
+<div id="rowTooltip" class="row-tooltip"></div>
 
 <script id="dashboard-data" type="application/json">__DATA_JSON__</script>
 <script id="port-groups-data" type="application/json">__PORT_GROUPS_JSON__</script>
@@ -903,6 +965,9 @@ def write_html_dashboard(week_blocks, generated_at):
 const DATA = JSON.parse(document.getElementById('dashboard-data').textContent);
 const PORT_GROUPS = JSON.parse(document.getElementById('port-groups-data').textContent);
 const REEFER = JSON.parse(document.getElementById('reefer-data').textContent);
+
+const ROW_LOOKUP = {};
+DATA.forEach(block => block.rows.forEach(row => { ROW_LOOKUP[row.vsl + '|' + row.voy] = row; }));
 
 function pill(status, text) {
   const cls = status.replace('/', '-');
@@ -1011,13 +1076,13 @@ function render() {
           return `<td ${sAllo}>${allo}</td><td ${sMid}>${c.actual}</td><td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
         baseCellsHtml = `
-        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
+        <td class="wrap-cell tip-cell" data-tip-key="${row.vsl}|${row.voy}">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
         <td>${row.etd || 'N/A'}</td>
         <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
       } else {
         baseCellsHtml = `
         <td>${row.svc}</td>
-        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
+        <td class="wrap-cell tip-cell" data-tip-key="${row.vsl}|${row.voy}">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
         <td>${row.etd || 'N/A'}</td>
         <td>${row.bsaFull === null || row.bsaFull === undefined ? 'N/A' : row.bsaFull}</td>
         <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
@@ -1091,6 +1156,57 @@ function renderReefer() {
       </div>
     </div>`;
 }
+
+const tooltipEl = document.getElementById('rowTooltip');
+
+function showTooltip(row, e) {
+  const cls = row.status.replace('/', '-');
+  const podRows = row.podBreakdown.rows.map(pr =>
+    `<tr><td>${pr.label}</td><td>${pr.c20}</td><td>${pr.c40}</td><td>${pr.teu}</td></tr>`
+  ).join('');
+  const t = row.podBreakdown.total;
+  tooltipEl.innerHTML = `
+    <div class="tip-head status-${cls}">
+      <div class="tip-vessel">${row.vesselName}<span>${row.vsl} ${row.voy}</span></div>
+      <div class="tip-meta">${row.bookingCount} bookings &middot; ETD ${row.etd || 'N/A'}</div>
+    </div>
+    <table>
+      <thead><tr><th>POD</th><th>20'</th><th>40'</th><th>TEU</th></tr></thead>
+      <tbody>${podRows}</tbody>
+      <tfoot><tr><td>TOTAL</td><td>${t.c20}</td><td>${t.c40}</td><td>${t.teu}</td></tr></tfoot>
+    </table>`;
+  tooltipEl.style.display = 'block';
+  positionTooltip(e);
+}
+
+function positionTooltip(e) {
+  const pad = 16;
+  const rect = tooltipEl.getBoundingClientRect();
+  let x = e.clientX + pad;
+  let y = e.clientY + pad;
+  if (x + rect.width > window.innerWidth - 8) x = e.clientX - rect.width - pad;
+  if (y + rect.height > window.innerHeight - 8) y = e.clientY - rect.height - pad;
+  tooltipEl.style.left = Math.max(8, x) + 'px';
+  tooltipEl.style.top = Math.max(8, y) + 'px';
+}
+
+function hideTooltip() {
+  tooltipEl.style.display = 'none';
+}
+
+document.addEventListener('mouseover', e => {
+  const cell = e.target.closest('.tip-cell');
+  if (!cell) return;
+  const row = ROW_LOOKUP[cell.dataset.tipKey];
+  if (row) showTooltip(row, e);
+});
+document.addEventListener('mousemove', e => {
+  if (tooltipEl.style.display === 'block') positionTooltip(e);
+});
+document.addEventListener('mouseout', e => {
+  const cell = e.target.closest('.tip-cell');
+  if (cell && !cell.contains(e.relatedTarget)) hideTooltip();
+});
 
 function tickClock() {
   const now = new Date();

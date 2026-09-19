@@ -359,7 +359,9 @@ def status_for(pct):
     return "OK"
 
 
-STATUS_ICON = {"OK": "\U0001F7E2", "OVER": "\U0001F534", "FULL": "\U0001F535", "N/A": "⚪"}
+# Deliberate, user-specified (non-conventional) status colors everywhere:
+# red = OK (within quota), blue = OVER (exceeds quota), green = FULL (exactly 100%).
+STATUS_ICON = {"OK": "\U0001F534", "OVER": "\U0001F535", "FULL": "\U0001F7E2", "N/A": "⚪"}
 
 # The 5 POD views the report/dashboard offer -- matching the analyst's
 # original Report.xlsx tab layout exactly: some destinations get their own
@@ -571,9 +573,9 @@ def write_excel_report(week_blocks):
     HEADER_FONT = Font(bold=True, color="FFFFFF")
     WEEK_LABEL_FILL = PatternFill("solid", fgColor="D9D9D9")
     FILLS = {
-        "OK": PatternFill("solid", fgColor="C6EFCE"),
-        "OVER": PatternFill("solid", fgColor="FFC7CE"),
-        "FULL": PatternFill("solid", fgColor="BDD7EE"),
+        "OK": PatternFill("solid", fgColor="FFC7CE"),
+        "OVER": PatternFill("solid", fgColor="BDD7EE"),
+        "FULL": PatternFill("solid", fgColor="C6EFCE"),
         "N/A": None,
     }
 
@@ -829,9 +831,9 @@ def write_html_dashboard(week_blocks, generated_at):
 <title>BSA Utilization Report</title>
 <style>
   :root {
-    --ok: #15803d; --ok-bg: #ecfdf3; --ok-border: #bbf0cd;
-    --over: #c0392b; --over-bg: #fef2f1; --over-border: #f8c9c4;
-    --full: #1d4ed8; --full-bg: #eef3ff; --full-border: #c7d7fb;
+    --ok: #c0392b; --ok-bg: #fef2f1; --ok-border: #f8c9c4;
+    --over: #1d4ed8; --over-bg: #eef3ff; --over-border: #c7d7fb;
+    --full: #15803d; --full-bg: #ecfdf3; --full-border: #bbf0cd;
     --na: #94a3b8; --na-bg: #f4f6f8; --na-border: #e4e9ef;
     --ink: #101828; --muted: #6b7887; --border: #e7ebf0; --band: #f9fafb;
     --accent: #2563eb; --accent-soft: #eef4ff;
@@ -861,9 +863,9 @@ def write_html_dashboard(week_blocks, generated_at):
   .kpi .num { position:relative; font-size:31px; font-weight:700; line-height:1.2; }
   .kpi .lbl { position:relative; font-size:14px; color:var(--muted); margin-top:3px; font-weight:600; }
   .kpi.total { --c1:#2563eb; --c2:#7dabfb; --c1-soft:var(--accent-soft); }
-  .kpi.ok { --c1:#15803d; --c2:#5fd68a; --c1-soft:var(--ok-bg); } .kpi.ok .num { color:var(--ok); }
-  .kpi.full { --c1:#1d4ed8; --c2:#7dabfb; --c1-soft:var(--full-bg); } .kpi.full .num { color:var(--full); }
-  .kpi.over { --c1:#c0392b; --c2:#f18f85; --c1-soft:var(--over-bg); } .kpi.over .num { color:var(--over); }
+  .kpi.ok { --c1:#c0392b; --c2:#f18f85; --c1-soft:var(--ok-bg); } .kpi.ok .num { color:var(--ok); }
+  .kpi.full { --c1:#15803d; --c2:#5fd68a; --c1-soft:var(--full-bg); } .kpi.full .num { color:var(--full); }
+  .kpi.over { --c1:#1d4ed8; --c2:#7dabfb; --c1-soft:var(--over-bg); } .kpi.over .num { color:var(--over); }
   .controls { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 16px; box-shadow:var(--shadow); }
   .controls label { font-size:14.5px; color:var(--muted); font-weight:500; }
   select { padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:15px; background:#fff; color:var(--ink); cursor:pointer; }
@@ -891,7 +893,7 @@ def write_html_dashboard(week_blocks, generated_at):
   .pill.N-A { color:var(--na); background:var(--na-bg); border-color:var(--na-border); }
   .pct-text { font-weight:700; }
   .pct-text.OK { color:var(--ok); } .pct-text.OVER { color:var(--over); } .pct-text.FULL { color:var(--full); } .pct-text.N-A { color:var(--na); }
-  .note { color:var(--full); font-size:13.5px; margin-top:4px; font-weight:500; }
+  .note { color:#1d4ed8; font-size:13.5px; margin-top:4px; font-weight:500; }
   .empty { padding:32px; text-align:center; color:var(--muted); background:#fff; border:1px solid var(--border); border-radius:14px; font-size:15px; }
   footer { text-align:center; color:var(--muted); font-size:13.5px; padding:24px; }
   .tip-cell { cursor:help; }
@@ -933,9 +935,9 @@ def write_html_dashboard(week_blocks, generated_at):
 <div class="wrap">
   <div class="kpis">
     <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">__TOTAL_LANES__</div><div class="lbl">Vessel sailings</div></div>
-    <div class="kpi ok"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_OK__</div><div class="lbl">OK</div></div>
-    <div class="kpi full"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_FULL__</div><div class="lbl">100% (Full)</div></div>
-    <div class="kpi over"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OVER__</div><div class="lbl">OVER</div></div>
+    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl">OK</div></div>
+    <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_FULL__</div><div class="lbl">100% (Full)</div></div>
+    <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_OVER__</div><div class="lbl">OVER</div></div>
   </div>
   <div class="controls">
     <label for="portSelect">View by destination Port (POD):</label>
@@ -979,7 +981,7 @@ function pctSpan(pct, status) {
   return `<span class="pct-text ${cls}">${text}</span>`;
 }
 function statusIcon(s) {
-  return {OK: '\u{1F7E2}', OVER: '\u{1F534}', FULL: '\u{1F535}', 'N/A': '⚪'}[s] || '';
+  return {OK: '\u{1F534}', OVER: '\u{1F535}', FULL: '\u{1F7E2}', 'N/A': '⚪'}[s] || '';
 }
 function getPortCell(row, name) {
   if (name === 'TOTAL') {

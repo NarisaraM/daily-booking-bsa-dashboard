@@ -362,6 +362,8 @@ def status_for(pct):
 # Deliberate, user-specified (non-conventional) status colors everywhere:
 # red = OK (within quota), blue = OVER (exceeds quota), green = FULL (exactly 100%).
 STATUS_ICON = {"OK": "\U0001F534", "OVER": "\U0001F535", "FULL": "\U0001F7E2", "N/A": "⚪"}
+# Display names; the internal status keys (OK/OVER/FULL) stay as-is in the logic.
+STATUS_LABEL = {"OK": "Dangerous", "OVER": "OVER", "FULL": "FULL", "N/A": "N/A"}
 
 # The 5 POD views the report/dashboard offer -- matching the analyst's
 # original Report.xlsx tab layout exactly: some destinations get their own
@@ -601,7 +603,7 @@ def write_excel_report(week_blocks):
                 vessel_row["bsa_full_teu"] if vessel_row["bsa_full_teu"] is not None else "N/A",
                 vessel_row["bsa_total_teu"] if vessel_row["bsa_total_teu"] is not None else "N/A",
                 round(vessel_row["booked_teu"], 2), pct_str, teu_note,
-                STATUS_ICON[vessel_row["status"]] + " " + vessel_row["status"],
+                STATUS_ICON[vessel_row["status"]] + " " + STATUS_LABEL[vessel_row["status"]],
                 round(vessel_row["booked_weight_ton"], 1),
             ])
             r = ws.max_row
@@ -743,7 +745,7 @@ def write_excel_report(week_blocks):
                 vessel_row["bsa_full_teu"], vessel_row["bsa_total_teu"], round(vessel_row["booked_teu"], 2),
                 f"{vessel_row['pct_teu']:.1f}%" if vessel_row["pct_teu"] is not None else "N/A",
                 teu_note,
-                STATUS_ICON[vessel_row["status"]] + " " + vessel_row["status"],
+                STATUS_ICON[vessel_row["status"]] + " " + STATUS_LABEL[vessel_row["status"]],
                 round(excess, 2) if excess is not None else "N/A",
             ])
             fill = FILLS.get(vessel_row["status"])
@@ -935,7 +937,7 @@ def write_html_dashboard(week_blocks, generated_at):
 <div class="wrap">
   <div class="kpis">
     <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">__TOTAL_LANES__</div><div class="lbl">Vessel sailings</div></div>
-    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl">OK</div></div>
+    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl">Dangerous</div></div>
     <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_FULL__</div><div class="lbl">100% (Full)</div></div>
     <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_OVER__</div><div class="lbl">OVER</div></div>
   </div>
@@ -949,7 +951,7 @@ def write_html_dashboard(week_blocks, generated_at):
     <label for="statusFilter">Status:</label>
     <select id="statusFilter">
       <option value="">All</option>
-      <option value="OK">OK</option>
+      <option value="OK">Dangerous</option>
       <option value="FULL">Full (100%)</option>
       <option value="OVER">Over</option>
     </select>
@@ -979,6 +981,9 @@ function pctSpan(pct, status) {
   const cls = status.replace('/', '-');
   const text = (pct === null || pct === undefined) ? 'N/A' : pct.toFixed(1) + '%';
   return `<span class="pct-text ${cls}">${text}</span>`;
+}
+function statusLabel(s) {
+  return {OK: 'Dangerous', OVER: 'OVER', FULL: 'FULL', 'N/A': 'N/A'}[s] || s;
 }
 function statusIcon(s) {
   return {OK: '\u{1F534}', OVER: '\u{1F535}', FULL: '\u{1F7E2}', 'N/A': '⚪'}[s] || '';
@@ -1080,7 +1085,7 @@ function render() {
         baseCellsHtml = `
         <td class="wrap-cell tip-cell" data-tip-key="${row.vsl}|${row.voy}">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
         <td>${row.etd || 'N/A'}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
       } else {
         baseCellsHtml = `
         <td>${row.svc}</td>
@@ -1090,7 +1095,7 @@ function render() {
         <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
         <td>${row.lifting}</td>
         <td>${pctSpan(row.pctTeu, row.status)}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
       }
       return `<tr>${baseCellsHtml}${portCellsHtml}</tr>`;
     }).join('');

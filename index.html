@@ -109,7 +109,7 @@
 <div class="wrap">
   <div class="kpis">
     <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">51</div><div class="lbl">Vessel sailings</div></div>
-    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">38</div><div class="lbl">OK</div></div>
+    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">38</div><div class="lbl">Dangerous</div></div>
     <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">0</div><div class="lbl">100% (Full)</div></div>
     <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">12</div><div class="lbl">OVER</div></div>
   </div>
@@ -127,7 +127,7 @@
     <label for="statusFilter">Status:</label>
     <select id="statusFilter">
       <option value="">All</option>
-      <option value="OK">OK</option>
+      <option value="OK">Dangerous</option>
       <option value="FULL">Full (100%)</option>
       <option value="OVER">Over</option>
     </select>
@@ -157,6 +157,9 @@ function pctSpan(pct, status) {
   const cls = status.replace('/', '-');
   const text = (pct === null || pct === undefined) ? 'N/A' : pct.toFixed(1) + '%';
   return `<span class="pct-text ${cls}">${text}</span>`;
+}
+function statusLabel(s) {
+  return {OK: 'Dangerous', OVER: 'OVER', FULL: 'FULL', 'N/A': 'N/A'}[s] || s;
 }
 function statusIcon(s) {
   return {OK: '\u{1F534}', OVER: '\u{1F535}', FULL: '\u{1F7E2}', 'N/A': '⚪'}[s] || '';
@@ -258,7 +261,7 @@ function render() {
         baseCellsHtml = `
         <td class="wrap-cell tip-cell" data-tip-key="${row.vsl}|${row.voy}">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
         <td>${row.etd || 'N/A'}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
       } else {
         baseCellsHtml = `
         <td>${row.svc}</td>
@@ -268,7 +271,7 @@ function render() {
         <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
         <td>${row.lifting}</td>
         <td>${pctSpan(row.pctTeu, row.status)}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + row.status)}</td>`;
+        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
       }
       return `<tr>${baseCellsHtml}${portCellsHtml}</tr>`;
     }).join('');

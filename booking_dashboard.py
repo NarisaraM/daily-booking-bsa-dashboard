@@ -510,6 +510,13 @@ def build_analysis(bookings, sked_lookup, bsa):
             "slot_share_label": sked["slot_share_label"] if sked else "",
         })
 
+    # Drop sailings that have already departed (ETD before today) -- this is
+    # a recurring daily report, so each run should only show what's still
+    # actionable. Sailings with no resolvable ETD are kept (there's nothing
+    # to compare against "today"), not silently dropped.
+    today = datetime.now().date()
+    sailing_records = [r for r in sailing_records if r["etd"] is None or r["etd"].date() >= today]
+
     # Step 2: group sailings by ISO week (Mon-Sun) of ETD. Each vessel sailing
     # gets its own row -- compared against its lane's full BSA quota on its
     # own, never combined with other vessels of the same lane/week, since the

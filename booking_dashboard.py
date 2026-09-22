@@ -99,6 +99,25 @@ def _latest(paths):
     return max(paths, key=os.path.getmtime)
 
 
+def _read_header_row(path):
+    """First-row column names for an .xls/.xlsx file, used to identify what
+    kind of export a file is. The exports this pipeline consumes land with
+    arbitrary/opaque filenames (a ticket or time-of-day number, not a
+    descriptive name, and it changes every drop) -- so file *type* has to be
+    sniffed from its actual columns rather than trusted from the filename."""
+    if path.lower().endswith(".xlsx"):
+        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
+        try:
+            row = next(wb[wb.sheetnames[0]].iter_rows(min_row=1, max_row=1, values_only=True))
+        finally:
+            wb.close()
+    else:
+        wb = xlrd.open_workbook(path)
+        sh = wb.sheet_by_index(0)
+        row = [sh.cell_value(0, c) for c in range(sh.ncols)]
+    return {str(c).strip() for c in row if c}
+
+
 def find_bsa_file():
     candidates = glob.glob(os.path.join(INPUT_FOLDER, "*BSA*.xls*"))
     candidates = [p for p in candidates if not os.path.basename(p).startswith("~$")]
@@ -107,29 +126,44 @@ def find_bsa_file():
     return _latest(candidates)
 
 
+SKED_SIGNATURE = {"Service", "Vessel Name", "Vyg Bound"}
+BOOKING_SIGNATURE = {"VSL", "VOY", "TEU", "POD"}
+
+
 def find_sked_file():
-    candidates = [
-        p for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*"))
-        if not os.path.basename(p).startswith("~$") and "sked" in os.path.basename(p).lower()
-    ]
+    bsa_file = find_bsa_file()
+    candidates = []
+    for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*")):
+        if os.path.basename(p).startswith("~$") or p == bsa_file:
+            continue
+        try:
+            if SKED_SIGNATURE.issubset(_read_header_row(p)):
+                candidates.append(p)
+        except Exception:
+            continue
     if not candidates:
-        raise FileNotFoundError(f"No schedule file (name containing 'SKED') found in {INPUT_FOLDER}")
+        raise FileNotFoundError(
+            f"No schedule file (columns {sorted(SKED_SIGNATURE)}) found in {INPUT_FOLDER}"
+        )
     return _latest(candidates)
 
 
 def find_master_booking_file():
     bsa_file = find_bsa_file()
     sked_file = find_sked_file()
-    excluded_names = {"report.xlsx", os.path.basename(EXCEL_OUTPUT).lower()}
-    candidates = [
-        p for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*"))
-        if not os.path.basename(p).startswith("~$")
-        and p != bsa_file
-        and p != sked_file
-        and os.path.basename(p).lower() not in excluded_names
-    ]
+    candidates = []
+    for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*")):
+        if os.path.basename(p).startswith("~$") or p in (bsa_file, sked_file):
+            continue
+        try:
+            if BOOKING_SIGNATURE.issubset(_read_header_row(p)):
+                candidates.append(p)
+        except Exception:
+            continue
     if not candidates:
-        raise FileNotFoundError(f"No master booking export found in {INPUT_FOLDER}")
+        raise FileNotFoundError(
+            f"No master booking export (columns {sorted(BOOKING_SIGNATURE)}) found in {INPUT_FOLDER}"
+        )
     return _latest(candidates)
 
 
@@ -281,10 +315,11 @@ def parse_bookings(path):
         c20 = sh.cell_value(r, idx["C20"]) or 0
         c40 = sh.cell_value(r, idx["C40"]) or 0
         c45 = sh.cell_value(r, idx["C45"]) or 0
+        svc_raw = sh.cell_value(r, idx["SVC"]) if "SVC" in idx else ""
         rows.append({
             "vsl": str(vsl).strip().upper(),
             "voy": str(voy).strip().upper(),
-            "svc": str(sh.cell_value(r, idx["SVC"]) or "").strip().upper(),
+            "svc": str(svc_raw or "").strip().upper(),
             "pod": str(sh.cell_value(r, idx["POD"]) or "").strip().upper(),
             "teu": float(sh.cell_value(r, idx["TEU"]) or 0),
             "weight_kg": float(sh.cell_value(r, idx["BK Tot Weight"]) or 0),

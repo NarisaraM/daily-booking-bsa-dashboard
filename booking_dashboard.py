@@ -529,7 +529,7 @@ def build_analysis(bookings, sked_lookup, bsa):
             week_label = f"Week {iso_week}"
             week_range = f"{week_monday.isoformat()} - {week_sunday.isoformat()}"
 
-        recs = sorted(weeks[week_monday], key=lambda r: (r["lane"], r["etd"] or datetime.max, r["vessel_name"]))
+        recs = sorted(weeks[week_monday], key=lambda r: (r["etd"] or datetime.max, r["lane"], r["vessel_name"]))
 
         vessel_rows = []
         for r in recs:

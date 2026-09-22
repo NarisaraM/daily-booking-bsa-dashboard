@@ -487,7 +487,7 @@ def build_analysis(bookings, sked_lookup, bsa):
     week_blocks = []
     for week_monday in sorted(weeks.keys(), key=lambda d: (d is None, d)):
         if week_monday is None:
-            week_label, week_range = "Unknown week (no ETD)", ""
+            week_label, week_range, iso_week = "Unknown week (no ETD)", "", None
         else:
             iso_week = week_monday.isocalendar()[1]
             week_sunday = week_monday + timedelta(days=6)
@@ -540,7 +540,7 @@ def build_analysis(bookings, sked_lookup, bsa):
                 "slot_share_notes": [r["slot_share_label"]] if r["slot_share"] else [],
             })
 
-        week_blocks.append({"label": week_label, "range": week_range, "monday": week_monday, "rows": vessel_rows})
+        week_blocks.append({"label": week_label, "week_num": iso_week, "range": week_range, "monday": week_monday, "rows": vessel_rows})
 
     return week_blocks
 
@@ -796,7 +796,7 @@ def _dashboard_json(week_blocks):
                 "bookingCount": vr["booking_count"],
                 "podBreakdown": vr["pod_breakdown"],
             })
-        data.append({"label": block["label"], "range": block["range"], "rows": rows})
+        data.append({"label": block["label"], "week": block["week_num"], "range": block["range"], "rows": rows})
     return data
 
 
@@ -808,7 +808,7 @@ def _reefer_json(week_blocks):
             if not vr["total_reefer"]:
                 continue
             rows.append({
-                "week": block["label"], "svc": vr["svc_raw"],
+                "week": block["label"], "weekNum": block["week_num"], "svc": vr["svc_raw"],
                 "vesselName": vr["vessel_name"], "vsl": vr["vsl"], "voy": vr["voy"],
                 "etd": vr["etd"].strftime("%Y-%m-%d") if vr["etd"] else None,
                 "total": vr["total_reefer"],
@@ -851,9 +851,10 @@ def write_html_dashboard(week_blocks, generated_at):
   html { -webkit-text-size-adjust:100%; }
   body { margin:0; background:#f4f7fb; color:var(--ink); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
   .wrap { max-width:1600px; margin:0 auto; padding:24px 20px 40px; }
-  .hero { position:relative; border-radius:16px; overflow:hidden; margin-bottom:22px;
-          background:linear-gradient(135deg, var(--navy) 0%, var(--navy-2) 100%); box-shadow:0 2px 6px rgba(16,24,40,.14); }
-  .hero-inner { position:relative; z-index:1; padding:22px 26px 20px; display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; }
+  .hero { position:relative; border-radius:16px; overflow:hidden; margin-bottom:22px; min-height:168px; display:flex; align-items:flex-end;
+          background:var(--navy) center 55% / cover no-repeat url('hero-bg.jpg'); box-shadow:0 2px 6px rgba(16,24,40,.14); }
+  .hero::after { content:''; position:absolute; inset:0; background:linear-gradient(180deg, rgba(15,30,54,.15) 0%, rgba(15,30,54,.6) 65%, rgba(15,30,54,.86) 100%); }
+  .hero-inner { position:relative; z-index:1; padding:22px 26px 20px; width:100%; display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; }
   .hero h1 { color:#fff; margin:0 0 4px; font-size:25px; font-weight:700; letter-spacing:-.2px; text-shadow:0 1px 3px rgba(0,0,0,.25); }
   .hero h1 .upd { font-size:15px; font-weight:600; opacity:.85; margin-left:8px; white-space:nowrap; }
   .hero .subtitle { color:rgba(255,255,255,.88); margin:0; font-size:13px; max-width:760px; line-height:1.45; }
@@ -863,6 +864,7 @@ def write_html_dashboard(week_blocks, generated_at):
   .hero-clock .clock-time { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.15; text-shadow:0 1px 2px rgba(0,0,0,.3); }
   .hero-clock .clock-date { font-size:12px; font-weight:600; opacity:.85; margin-top:2px; }
   .hero-logo { height:34px; width:auto; object-fit:contain; background:#fff; border-radius:8px; padding:4px 8px; }
+  .top-controls { display:flex; justify-content:flex-end; margin:12px 0; }
   .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
   .kpi { position:relative; flex:1; min-width:150px; background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px 18px 14px; box-shadow:var(--shadow); overflow:hidden; }
   .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:5px; background:linear-gradient(90deg, var(--c1), var(--c2)); }
@@ -885,7 +887,9 @@ def write_html_dashboard(week_blocks, generated_at):
   .seg-btn { background:none; border:none; cursor:pointer; font-size:12.5px; font-weight:600; color:var(--muted); padding:6px 14px; border-radius:7px; font-family:inherit; white-space:nowrap; }
   .seg-btn.active { color:#fff; background:var(--navy-2); }
   .week { background:#fff; border:1px solid var(--border); border-radius:14px; margin-bottom:18px; box-shadow:var(--shadow); overflow:hidden; }
-  .week-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 20px; background:linear-gradient(90deg, var(--navy), var(--navy-2)); color:#fff; font-weight:700; font-size:15px; }
+  .week-head { display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:12px; padding:12px 20px; background:linear-gradient(90deg, var(--navy), var(--navy-2)); color:#fff; font-weight:700; font-size:15px; }
+  .week-head .wk-label { justify-self:start; }
+  .week-head .wk-spacer { justify-self:end; }
   .week-head .wk-stat { display:flex; gap:8px; font-size:11.5px; font-weight:600; }
   .week-head .wk-stat span { background:rgba(255,255,255,.16); border-radius:999px; padding:2px 9px; }
   .week-head .wk-stat span.warn { background:rgba(120,170,255,.4); }
@@ -948,8 +952,8 @@ def write_html_dashboard(week_blocks, generated_at):
   <div class="hero">
     <div class="hero-inner">
       <div>
-        <h1>&#x1F6A2; BSA Utilization Report<span class="upd">(update __GENERATED_AT__)</span></h1>
-        <p class="subtitle">Booking vs BSA &middot; VNSGN &middot; HKHKG &middot; CNXMN &middot; CNSHK &middot; TWKEL &middot; CNSHA &middot; KRPUS &middot; IDJKT</p>
+        <h1>&#x1F6A2; <span data-i18n="hero_title"></span><span class="upd">(<span data-i18n="update_label"></span> __GENERATED_AT__)</span></h1>
+        <p class="subtitle"><span data-i18n="subtitle_prefix"></span> &middot; VNSGN &middot; HKHKG &middot; CNXMN &middot; CNSHK &middot; TWKEL &middot; CNSHA &middot; KRPUS &middot; IDJKT</p>
       </div>
       <div class="hero-right">
         <div class="hero-clock">
@@ -960,30 +964,37 @@ def write_html_dashboard(week_blocks, generated_at):
       </div>
     </div>
   </div>
+  <div class="top-controls">
+    <div class="seg-control" id="langToggle">
+      <button type="button" class="seg-btn active" data-lang="en">EN</button>
+      <button type="button" class="seg-btn" data-lang="th">&#xE44;&#xE17;&#xE22;</button>
+      <button type="button" class="seg-btn" data-lang="ko">&#xD55C;&#xAD6D;&#xC5B4;</button>
+    </div>
+  </div>
   <div class="kpis">
-    <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">__TOTAL_LANES__</div><div class="lbl">Vessel sailings</div></div>
-    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl">Dangerous</div></div>
-    <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_FULL__</div><div class="lbl">100% (Full)</div></div>
-    <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_OVER__</div><div class="lbl">OVER</div></div>
-    <div class="kpi teu"><div class="kpi-icon">&#x1F4E6;</div><div class="num">__TOTAL_TEU__</div><div class="lbl">Lifting TEU</div></div>
-    <div class="kpi reefer"><div class="kpi-icon">&#x2744;&#xFE0F;</div><div class="num">__TOTAL_REEFER__</div><div class="lbl">Reefer plugs</div></div>
+    <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">__TOTAL_LANES__</div><div class="lbl" data-i18n="kpi_sailings"></div></div>
+    <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl" data-i18n="kpi_dangerous"></div></div>
+    <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_FULL__</div><div class="lbl" data-i18n="kpi_full"></div></div>
+    <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_OVER__</div><div class="lbl" data-i18n="kpi_over"></div></div>
+    <div class="kpi teu"><div class="kpi-icon">&#x1F4E6;</div><div class="num">__TOTAL_TEU__</div><div class="lbl" data-i18n="kpi_teu"></div></div>
+    <div class="kpi reefer"><div class="kpi-icon">&#x2744;&#xFE0F;</div><div class="num">__TOTAL_REEFER__</div><div class="lbl" data-i18n="kpi_reefer"></div></div>
   </div>
   <div class="controls">
     <div class="grp">
-      <label for="portSelect">View by destination (POD)</label>
+      <label for="portSelect" data-i18n="view_label"></label>
       <select id="portSelect">
-        <option value="__ALL__">All ports (TEU total)</option>
+        <option value="__ALL__" data-i18n="view_all"></option>
         __PORT_OPTIONS__
-        <option value="__REEFER__">&#x2744;&#xFE0F; Reefer (Plug)</option>
+        <option value="__REEFER__" data-i18n="view_reefer_opt"></option>
       </select>
     </div>
     <div class="grp" id="statusGrp">
-      <label>Status</label>
+      <label data-i18n="status_label"></label>
       <div class="seg-control" id="statusToggle">
-        <button type="button" class="seg-btn active" data-status="">All</button>
-        <button type="button" class="seg-btn" data-status="OK">Dangerous</button>
-        <button type="button" class="seg-btn" data-status="FULL">Full</button>
-        <button type="button" class="seg-btn" data-status="OVER">Over</button>
+        <button type="button" class="seg-btn active" data-status="" data-i18n="status_all"></button>
+        <button type="button" class="seg-btn" data-status="OK" data-i18n="status_dangerous"></button>
+        <button type="button" class="seg-btn" data-status="FULL" data-i18n="status_full"></button>
+        <button type="button" class="seg-btn" data-status="OVER" data-i18n="status_over"></button>
       </div>
     </div>
   </div>
@@ -1005,6 +1016,64 @@ const REEFER = JSON.parse(document.getElementById('reefer-data').textContent);
 const ROW_LOOKUP = {};
 DATA.forEach(block => block.rows.forEach(row => { ROW_LOOKUP[row.vsl + '|' + row.voy] = row; }));
 
+const translations = {
+  hero_title: {en: 'BSA Utilization Report', th: 'รายงานการใช้พื้นที่ BSA', ko: 'BSA 소진율 리포트'},
+  update_label: {en: 'update', th: 'อัปเดต', ko: '업데이트'},
+  subtitle_prefix: {en: 'Booking vs BSA', th: 'บุ๊กกิ้ง เทียบ BSA', ko: '부킹 vs BSA'},
+  kpi_sailings: {en: 'Vessel sailings', th: 'เที่ยวเรือ', ko: '항차 수'},
+  kpi_dangerous: {en: 'Dangerous', th: 'อันตราย', ko: '위험'},
+  kpi_full: {en: '100% (Full)', th: 'เต็ม (100%)', ko: '풀 (100%)'},
+  kpi_over: {en: 'OVER', th: 'เกิน', ko: '초과'},
+  kpi_teu: {en: 'Lifting TEU', th: 'TEU ที่บุ๊ก', ko: '선적 TEU'},
+  kpi_reefer: {en: 'Reefer plugs', th: 'ตู้ห้องเย็น (ปลั๊ก)', ko: '냉동 플러그'},
+  view_label: {en: 'View by destination (POD)', th: 'ดูตามท่าปลายทาง (POD)', ko: '양하지(POD)별 보기'},
+  view_all: {en: 'All ports (TEU total)', th: 'ทุกท่า (รวม TEU)', ko: '전체 (TEU 합계)'},
+  view_reefer_opt: {en: '❄️ Reefer (Plug)', th: '❄️ ตู้ห้องเย็น (Reefer)', ko: '❄️ 냉동(Reefer)'},
+  status_label: {en: 'Status', th: 'สถานะ', ko: '상태'},
+  status_all: {en: 'All', th: 'ทั้งหมด', ko: '전체'},
+  status_dangerous: {en: 'Dangerous', th: 'อันตราย', ko: '위험'},
+  status_full: {en: 'Full', th: 'เต็ม', ko: '풀'},
+  status_over: {en: 'Over', th: 'เกิน', ko: '초과'},
+  th_svc: {en: 'SVC', th: 'เซอร์วิส', ko: '서비스'},
+  th_vessel: {en: 'Vessel / Voyage', th: 'เรือ / เที่ยวเรือ', ko: '선명 / 항차'},
+  th_etd: {en: 'ETD', th: 'เรือออก (ETD)', ko: '출항(ETD)'},
+  th_bsa: {en: 'BSA', th: 'BSA', ko: 'BSA'},
+  th_allo: {en: 'ALLO', th: 'จัดสรร (ALLO)', ko: '배정(ALLO)'},
+  th_lifting: {en: 'LIFTING', th: 'บุ๊กกิ้ง (LIFTING)', ko: '선적(LIFTING)'},
+  th_pct: {en: '%', th: '%', ko: '%'},
+  th_status: {en: 'Status', th: 'สถานะ', ko: '상태'},
+  th_allo_s: {en: 'Allo', th: 'จัดสรร', ko: '배정'},
+  th_actual_s: {en: 'Actual', th: 'จริง', ko: '실적'},
+  th_week: {en: 'Week', th: 'สัปดาห์', ko: '주'},
+  th_total_reefer: {en: 'Total Reefer', th: 'รวมตู้ห้องเย็น', ko: '냉동 합계'},
+  th_qty: {en: 'Qty', th: 'จำนวน', ko: '수량'},
+  week_word: {en: 'Week {n}', th: 'สัปดาห์ที่ {n}', ko: '{n}주차'},
+  stat_sailings: {en: 'sailings', th: 'เที่ยวเรือ', ko: '항차'},
+  stat_over: {en: 'OVER', th: 'เกิน', ko: '초과'},
+  reefer_title: {en: 'Reefer (Plug) Bookings', th: 'บุ๊กกิ้งตู้ห้องเย็น (ปลั๊ก)', ko: '냉동(Reefer) 부킹'},
+  reefer_sub: {en: 'Every sailing carrying at least one reefer container', th: 'ทุกเที่ยวเรือที่มีตู้ห้องเย็นอย่างน้อย 1 ตู้', ko: '냉동 컨테이너가 1대 이상 실린 항차'},
+  empty_msg: {en: 'No sailings match this filter.', th: 'ไม่มีเที่ยวเรือที่ตรงกับตัวกรอง', ko: '조건에 맞는 항차가 없습니다.'},
+  pop_pod: {en: 'POD', th: 'ท่าปลายทาง', ko: '양하지'},
+  pop_total: {en: 'TOTAL', th: 'รวม', ko: '합계'},
+  pop_bookings: {en: 'bookings', th: 'บุ๊กกิ้ง', ko: '건'},
+};
+let currentLang = 'en';
+function t(key) {
+  const entry = translations[key];
+  if (!entry) return key;
+  return entry[currentLang] || entry.en;
+}
+function tf(key, vars) {
+  let s = t(key);
+  Object.keys(vars || {}).forEach(k => { s = s.replace('{' + k + '}', vars[k]); });
+  return s;
+}
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => { el.textContent = t(el.getAttribute('data-i18n')); });
+  document.title = t('hero_title');
+  render();
+}
+
 function pill(status, text) {
   const cls = status.replace('/', '-');
   return `<span class="pill ${cls}"><span class="dot"></span>${text}</span>`;
@@ -1015,7 +1084,7 @@ function pctSpan(pct, status) {
   return `<span class="pct-text ${cls}">${text}</span>`;
 }
 function statusLabel(s) {
-  return {OK: 'Dangerous', OVER: 'OVER', FULL: 'FULL', 'N/A': 'N/A'}[s] || s;
+  return {OK: t('status_dangerous'), OVER: t('status_over'), FULL: t('status_full'), 'N/A': 'N/A'}[s] || s;
 }
 function statusIcon(s) {
   return {OK: '\u{1F534}', OVER: '\u{1F535}', FULL: '\u{1F7E2}', 'N/A': '⚪'}[s] || '';
@@ -1110,17 +1179,19 @@ function render() {
     const portHeadHtml = !group ? '' :
       group.ports.map((p, i) => {
         const g = GC[i % GC.length];
-        return `<th class="${g} gfirst">${p} Allo</th><th class="${g}">${p} Actual</th><th class="${g}">${p} %</th>`;
+        return `<th class="${g} gfirst">${p} ${t('th_allo_s')}</th><th class="${g}">${p} ${t('th_actual_s')}</th><th class="${g}">${p} %</th>`;
       }).join('');
     const theadHtml = !group
-      ? `<th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>`
-      : `<th>Vessel / Voyage</th><th>ETD</th><th>Status</th>${portHeadHtml}`;
-    const overBadge = overCount ? `<span class="warn">${overCount} OVER</span>` : '';
+      ? `<th>${t('th_svc')}</th><th>${t('th_vessel')}</th><th>${t('th_etd')}</th><th>${t('th_bsa')}</th><th>${t('th_allo')}</th><th>${t('th_lifting')}</th><th>${t('th_pct')}</th><th>${t('th_status')}</th>`
+      : `<th>${t('th_vessel')}</th><th>${t('th_etd')}</th><th>${t('th_status')}</th>${portHeadHtml}`;
+    const overBadge = overCount ? `<span class="warn">${overCount} ${t('stat_over')}</span>` : '';
+    const weekLabel = block.week ? tf('week_word', {n: block.week}) : block.label;
     root.insertAdjacentHTML('beforeend', `
       <div class="week">
         <div class="week-head">
-          <span>${block.label}<span class="range">${block.range}</span></span>
-          <span class="wk-stat"><span>${renderedRows.length} sailings</span><span>${teuSum.toFixed(0)} TEU</span>${overBadge}</span>
+          <span class="wk-label">${weekLabel}<span class="range">${block.range}</span></span>
+          <span class="wk-stat"><span>${renderedRows.length} ${t('stat_sailings')}</span><span>${teuSum.toFixed(0)} TEU</span>${overBadge}</span>
+          <span class="wk-spacer"></span>
         </div>
         <div class="table-scroll">
         <table class="${group ? 'compact' : ''}">
@@ -1131,7 +1202,7 @@ function render() {
       </div>`);
   });
   if (!root.innerHTML) {
-    root.innerHTML = '<div class="empty">No sailings match this filter.</div>';
+    root.innerHTML = `<div class="empty">${t('empty_msg')}</div>`;
   }
 }
 
@@ -1145,7 +1216,15 @@ document.querySelectorAll('#statusToggle .seg-btn').forEach(btn => {
     render();
   });
 });
-render();
+document.querySelectorAll('#langToggle .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#langToggle .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentLang = btn.dataset.lang;
+    applyI18n();
+  });
+});
+applyI18n();
 
 function renderReefer() {
   const root = document.getElementById('reeferSection');
@@ -1153,11 +1232,12 @@ function renderReefer() {
     root.innerHTML = '';
     return;
   }
-  const portHeads = REEFER.ports.map(p => `<th>${p} Qty</th>`).join('');
+  const portHeads = REEFER.ports.map(p => `<th>${p} ${t('th_qty')}</th>`).join('');
   const rowsHtml = REEFER.rows.map(r => {
     const portCells = REEFER.ports.map(p => `<td>${r.ports[p] || 0}</td>`).join('');
+    const weekLabel = r.weekNum ? tf('week_word', {n: r.weekNum}) : r.week;
     return `<tr>
-      <td>${r.week}</td>
+      <td>${weekLabel}</td>
       <td class="svc">${r.svc}</td>
       <td class="vessel wrap-cell">${r.vesselName}<span class="code">${r.vsl} ${r.voy}</span></td>
       <td class="etd">${r.etd || 'N/A'}</td>
@@ -1167,11 +1247,11 @@ function renderReefer() {
   }).join('');
   root.innerHTML = `
     <div class="week">
-      <div class="week-head"><span>&#x2744;&#xFE0F; Reefer (Plug) Bookings<span class="range">Every sailing carrying at least one reefer container</span></span></div>
+      <div class="week-head"><span class="wk-label">&#x2744;&#xFE0F; ${t('reefer_title')}<span class="range">${t('reefer_sub')}</span></span></div>
       <div class="table-scroll">
       <table>
         <thead><tr>
-          <th>Week</th><th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>Total Reefer Qty</th>${portHeads}
+          <th>${t('th_week')}</th><th>${t('th_svc')}</th><th>${t('th_vessel')}</th><th>${t('th_etd')}</th><th>${t('th_total_reefer')}</th>${portHeads}
         </tr></thead>
         <tbody>${rowsHtml}</tbody>
       </table>
@@ -1185,16 +1265,16 @@ function showTooltip(row, e) {
   const podRows = row.podBreakdown.rows.map(pr =>
     `<tr><td>${pr.label}</td><td>${pr.c20}</td><td>${pr.c40}</td><td>${pr.teu}</td></tr>`
   ).join('');
-  const t = row.podBreakdown.total;
+  const tot = row.podBreakdown.total;
   tooltipEl.innerHTML = `
     <div class="tip-head">
       <div class="tip-vessel">${row.vesselName}<span>${row.vsl} ${row.voy}</span></div>
-      <div class="tip-meta">${row.bookingCount} bookings &middot; ETD ${row.etd || 'N/A'}</div>
+      <div class="tip-meta">${row.bookingCount} ${t('pop_bookings')} &middot; ETD ${row.etd || 'N/A'}</div>
     </div>
     <table>
-      <thead><tr><th>POD</th><th>20'</th><th>40'</th><th>TEU</th></tr></thead>
+      <thead><tr><th>${t('pop_pod')}</th><th>20'</th><th>40'</th><th>TEU</th></tr></thead>
       <tbody>${podRows}</tbody>
-      <tfoot><tr><td>TOTAL</td><td>${t.c20}</td><td>${t.c40}</td><td>${t.teu}</td></tr></tfoot>
+      <tfoot><tr><td>${t('pop_total')}</td><td>${tot.c20}</td><td>${tot.c40}</td><td>${tot.teu}</td></tr></tfoot>
     </table>`;
   tooltipEl.style.display = 'block';
   positionTooltip(e);

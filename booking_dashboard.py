@@ -858,14 +858,14 @@ def write_html_dashboard(week_blocks, generated_at):
   .hero h1 { color:#fff; margin:0 0 4px; font-size:25px; font-weight:700; letter-spacing:-.2px; text-shadow:0 1px 3px rgba(0,0,0,.25); }
   .hero h1 .upd { font-size:15px; font-weight:600; opacity:.85; margin-left:8px; white-space:nowrap; }
   .hero .subtitle { color:rgba(255,255,255,.88); margin:0; font-size:13px; max-width:760px; line-height:1.45; }
-  .hero-right { display:flex; align-items:center; gap:18px; }
+  .hero-right { display:flex; flex-direction:column; align-items:flex-end; gap:10px; }
   .clock-bar { display:flex; gap:10px; }
   .hero-clock { background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.28); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
                 border-radius:12px; padding:8px 14px 7px; min-width:132px; color:#fff; text-align:right; }
   .hero-clock .clock-city { font-size:10.5px; font-weight:700; letter-spacing:.4px; text-transform:uppercase; opacity:.85; }
   .hero-clock .clock-time { font-size:19px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.15; text-shadow:0 1px 2px rgba(0,0,0,.3); }
   .hero-clock .clock-date { font-size:11px; font-weight:600; opacity:.85; margin-top:1px; }
-  .hero-logo { height:56px; width:auto; object-fit:contain; }
+  .hero-logo { height:60px; width:auto; object-fit:contain; filter:drop-shadow(0 2px 5px rgba(0,0,0,.55)); }
   .top-controls { display:flex; justify-content:flex-end; margin:12px 0; }
   .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
   .kpi { position:relative; flex:1; min-width:150px; background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px 18px 14px; box-shadow:var(--shadow); overflow:hidden; }
@@ -960,6 +960,7 @@ def write_html_dashboard(week_blocks, generated_at):
         <p class="subtitle"><span data-i18n="subtitle_prefix"></span> &middot; VNSGN &middot; HKHKG &middot; CNXMN &middot; CNSHK &middot; TWKEL &middot; CNSHA &middot; KRPUS &middot; IDJKT</p>
       </div>
       <div class="hero-right">
+        <img class="hero-logo" src="logo-transparent.png" alt="Company logo">
         <div class="clock-bar">
           <div class="hero-clock">
             <div class="clock-city">&#x1F1F9;&#x1F1ED; Bangkok</div>
@@ -972,7 +973,6 @@ def write_html_dashboard(week_blocks, generated_at):
             <div class="clock-date" id="clockDateKR">Loading...</div>
           </div>
         </div>
-        <img class="hero-logo" src="logo.png" alt="Company logo">
       </div>
     </div>
   </div>

@@ -808,7 +808,8 @@ def _reefer_json(week_blocks):
             if not vr["total_reefer"]:
                 continue
             rows.append({
-                "week": block["label"], "svc": vr["svc_raw"], "vessel": vr["vessel"],
+                "week": block["label"], "svc": vr["svc_raw"],
+                "vesselName": vr["vessel_name"], "vsl": vr["vsl"], "voy": vr["voy"],
                 "etd": vr["etd"].strftime("%Y-%m-%d") if vr["etd"] else None,
                 "total": vr["total_reefer"],
                 "ports": {p: vr["reefer_by_port"].get(p, 0) for p in reefer_ports},
@@ -822,9 +823,12 @@ def write_html_dashboard(week_blocks, generated_at):
     port_groups_js = [{"key": name, "label": label, "ports": ports} for name, label, ports in PORT_SHEET_GROUPS]
     total_rows = sum(len(b["rows"]) for b in payload)
     counts = defaultdict(int)
+    total_teu = 0.0
     for b in payload:
         for row in b["rows"]:
             counts[row["status"]] += 1
+            total_teu += row["lifting"]
+    total_reefer = sum(r["total"] for r in reefer_payload["rows"])
 
     html = r"""<!DOCTYPE html>
 <html lang="th">
@@ -837,128 +841,157 @@ def write_html_dashboard(week_blocks, generated_at):
     --over: #1d4ed8; --over-bg: #eef3ff; --over-border: #c7d7fb;
     --full: #15803d; --full-bg: #ecfdf3; --full-border: #bbf0cd;
     --na: #94a3b8; --na-bg: #f4f6f8; --na-border: #e4e9ef;
-    --ink: #101828; --muted: #6b7887; --border: #e7ebf0; --band: #f9fafb;
-    --accent: #2563eb; --accent-soft: #eef4ff;
-    --row-line: #eef0f3; --row-alt: #f8f9fb; --row-hover: #f1f5fb;
+    --lime: #4d7c0f; --lime-2: #65a30d; --lime-bg: #f1f8e6;
+    --ink: #101828; --muted: #6b7887; --border: #e7ebf0; --band: #f3f6fa;
+    --navy: #1f3864; --navy-2: #2e5a94; --accent: #2563eb; --accent-soft: #eef4ff;
+    --row-line: #eef0f3; --row-alt: #fafbfd; --row-hover: var(--accent-soft);
     --shadow: 0 1px 2px rgba(16,24,40,.04), 0 2px 8px rgba(16,24,40,.05);
   }
   * { box-sizing: border-box; }
   html { -webkit-text-size-adjust:100%; }
-  body { margin:0; background:#f4f6f9; color:var(--ink); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
-  header { background:#fff; border-bottom:1px solid var(--border); padding:18px 28px; }
-  header .header-inner { max-width:1600px; margin:0 auto; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; }
-  header .header-left { display:flex; align-items:center; gap:14px; }
-  header .header-dot { font-size:22px; line-height:1; flex:none; }
-  header h1 { margin:0; font-size:23px; font-weight:700; color:var(--ink); letter-spacing:-.01em; }
-  header p { margin:2px 0 0; color:var(--muted); font-size:14.5px; }
-  header .header-right { display:flex; align-items:center; gap:16px; }
-  header .header-logo { height:36px; width:auto; object-fit:contain; border-left:1px solid var(--border); padding-left:16px; }
-  header .header-clock { text-align:right; }
-  header .header-clock .clock-time { font-size:18px; font-weight:700; color:var(--ink); font-variant-numeric:tabular-nums; letter-spacing:.02em; }
-  header .header-clock .clock-date { font-size:13px; color:var(--muted); font-weight:500; margin-top:1px; }
-  .wrap { max-width:1600px; margin:0 auto; padding:24px 28px 40px; }
-  .kpis { display:flex; gap:16px; flex-wrap:wrap; margin-bottom:22px; }
-  .kpi { position:relative; flex:1; min-width:170px; background:#fff; border:1px solid var(--border); border-radius:16px; padding:18px 20px 16px; box-shadow:var(--shadow); overflow:hidden; }
+  body { margin:0; background:#f4f7fb; color:var(--ink); font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1600px; margin:0 auto; padding:24px 20px 40px; }
+  .hero { position:relative; border-radius:16px; overflow:hidden; margin-bottom:22px;
+          background:linear-gradient(135deg, var(--navy) 0%, var(--navy-2) 100%); box-shadow:0 2px 6px rgba(16,24,40,.14); }
+  .hero-inner { position:relative; z-index:1; padding:22px 26px 20px; display:flex; justify-content:space-between; align-items:flex-end; gap:16px; flex-wrap:wrap; }
+  .hero h1 { color:#fff; margin:0 0 4px; font-size:25px; font-weight:700; letter-spacing:-.2px; text-shadow:0 1px 3px rgba(0,0,0,.25); }
+  .hero h1 .upd { font-size:15px; font-weight:600; opacity:.85; margin-left:8px; white-space:nowrap; }
+  .hero .subtitle { color:rgba(255,255,255,.88); margin:0; font-size:13px; max-width:760px; line-height:1.45; }
+  .hero-right { display:flex; align-items:center; gap:16px; }
+  .hero-clock { background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.28); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+                border-radius:12px; padding:9px 16px 8px; min-width:150px; color:#fff; text-align:right; }
+  .hero-clock .clock-time { font-size:22px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.15; text-shadow:0 1px 2px rgba(0,0,0,.3); }
+  .hero-clock .clock-date { font-size:12px; font-weight:600; opacity:.85; margin-top:2px; }
+  .hero-logo { height:34px; width:auto; object-fit:contain; background:#fff; border-radius:8px; padding:4px 8px; }
+  .kpis { display:flex; gap:14px; flex-wrap:wrap; margin-bottom:18px; }
+  .kpi { position:relative; flex:1; min-width:150px; background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px 18px 14px; box-shadow:var(--shadow); overflow:hidden; }
   .kpi::before { content:''; position:absolute; top:0; left:0; right:0; height:5px; background:linear-gradient(90deg, var(--c1), var(--c2)); }
   .kpi::after { content:''; position:absolute; width:96px; height:96px; border-radius:50%; top:-44px; right:-32px; background:var(--c1); opacity:.09; }
-  .kpi-icon { position:relative; width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:17px; background:var(--c1-soft); margin-bottom:12px; }
-  .kpi .num { position:relative; font-size:31px; font-weight:700; line-height:1.2; }
-  .kpi .lbl { position:relative; font-size:14px; color:var(--muted); margin-top:3px; font-weight:600; }
+  .kpi-icon { position:relative; width:32px; height:32px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-size:16px; background:var(--c1-soft); margin-bottom:10px; }
+  .kpi .num { position:relative; font-size:29px; font-weight:700; line-height:1.2; font-variant-numeric:tabular-nums; }
+  .kpi .lbl { position:relative; font-size:13px; color:var(--muted); margin-top:3px; font-weight:600; }
   .kpi.total { --c1:#2563eb; --c2:#7dabfb; --c1-soft:var(--accent-soft); }
   .kpi.ok { --c1:#c0392b; --c2:#f18f85; --c1-soft:var(--ok-bg); } .kpi.ok .num { color:var(--ok); }
   .kpi.full { --c1:#15803d; --c2:#5fd68a; --c1-soft:var(--full-bg); } .kpi.full .num { color:var(--full); }
   .kpi.over { --c1:#1d4ed8; --c2:#7dabfb; --c1-soft:var(--over-bg); } .kpi.over .num { color:var(--over); }
-  .controls { display:flex; gap:12px; align-items:center; margin-bottom:20px; flex-wrap:wrap; background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px 16px; box-shadow:var(--shadow); }
-  .controls label { font-size:14.5px; color:var(--muted); font-weight:500; }
-  select { padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:15px; background:#fff; color:var(--ink); cursor:pointer; }
-  select:focus { outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+  .kpi.teu { --c1:#4d7c0f; --c2:#a3e635; --c1-soft:var(--lime-bg); } .kpi.teu .num { color:var(--lime); }
+  .kpi.reefer { --c1:#0891b2; --c2:#67e8f9; --c1-soft:#ecfeff; } .kpi.reefer .num { color:#0e7490; }
+  .controls { display:flex; gap:18px; align-items:center; margin-bottom:16px; flex-wrap:wrap; background:#fff; border:1px solid var(--border); border-radius:12px; padding:10px 14px; box-shadow:0 1px 2px rgba(16,24,40,.03); }
+  .controls .grp { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .controls label { font-size:12.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  select#portSelect { min-width:260px; background:#fff; border:1px solid var(--border); border-radius:9px; padding:7px 12px; font-size:13.5px; font-weight:600; color:var(--navy); cursor:pointer; }
+  select#portSelect:hover, select#portSelect:focus { outline:none; border-color:var(--navy-2); box-shadow:0 0 0 3px rgba(46,90,148,.12); }
+  .seg-control { display:flex; gap:3px; background:var(--band); border:1px solid var(--border); border-radius:10px; padding:3px; flex-wrap:wrap; }
+  .seg-btn { background:none; border:none; cursor:pointer; font-size:12.5px; font-weight:600; color:var(--muted); padding:6px 14px; border-radius:7px; font-family:inherit; white-space:nowrap; }
+  .seg-btn.active { color:#fff; background:var(--navy-2); }
   .week { background:#fff; border:1px solid var(--border); border-radius:14px; margin-bottom:18px; box-shadow:var(--shadow); overflow:hidden; }
-  .week-head { padding:14px 20px; background:var(--band); border-bottom:1px solid var(--border); font-weight:700; font-size:16px; display:flex; justify-content:space-between; align-items:center; }
-  .week-head .range { font-weight:500; color:var(--muted); font-size:14px; }
-  .table-scroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
-  table { width:100%; border-collapse:collapse; font-size:15.5px; table-layout:auto; }
-  th, td { padding:13px 16px; border-bottom:1px solid var(--row-line); text-align:left; white-space:nowrap; }
+  .week-head { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:12px 20px; background:linear-gradient(90deg, var(--navy), var(--navy-2)); color:#fff; font-weight:700; font-size:15px; }
+  .week-head .wk-stat { display:flex; gap:8px; font-size:11.5px; font-weight:600; }
+  .week-head .wk-stat span { background:rgba(255,255,255,.16); border-radius:999px; padding:2px 9px; }
+  .week-head .wk-stat span.warn { background:rgba(120,170,255,.4); }
+  .week-head .range { font-weight:500; opacity:.85; font-size:13px; margin-left:10px; }
+  .table-scroll { overflow:auto; }
+  table { width:100%; border-collapse:collapse; font-size:14.5px; table-layout:auto; }
+  th, td { padding:11px 14px; border-bottom:1px solid var(--row-line); text-align:left; white-space:nowrap; }
   td.wrap-cell { white-space:normal; min-width:180px; }
-  td { color:var(--ink); font-weight:500; }
-  th { color:var(--muted); font-weight:600; font-size:12.5px; text-transform:uppercase; letter-spacing:.05em; background:var(--band); border-bottom:1px solid var(--border); }
+  td { color:var(--ink); font-weight:500; font-variant-numeric:tabular-nums; }
+  td.vessel { font-weight:700; }
+  td.vessel .code { color:var(--muted); font-weight:600; font-size:12px; margin-left:4px; }
+  td.svc { font-weight:700; color:var(--navy-2); }
+  td.etd { color:var(--muted); font-weight:600; }
+  th { color:var(--muted); font-weight:700; font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; background:var(--band); border-bottom:1px solid var(--border); position:sticky; top:0; }
   table.compact { width:100%; min-width:1300px; table-layout:fixed; }
-  table.compact th, table.compact td { padding:14px 12px; font-size:19px; white-space:normal; word-break:break-word; }
-  table.compact th { font-size:13.5px; line-height:1.3; }
+  table.compact th, table.compact td { padding:13px 10px; font-size:17px; white-space:normal; word-break:break-word; }
+  table.compact th { font-size:12.5px; line-height:1.3; }
   table.compact td.wrap-cell { min-width:0; }
   tbody tr:nth-child(even) { background:var(--row-alt); }
   tbody tr:hover { background:var(--row-hover); }
+  tbody tr.past { opacity:.55; }
   tbody tr:last-child td { border-bottom:none; }
-  .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:999px; font-weight:600; font-size:14px; border:1px solid transparent; }
+  .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:999px; font-weight:700; font-size:12.5px; letter-spacing:.02em; border:1px solid transparent; }
+  .pill .dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex:none; }
   .pill.OK { color:var(--ok); background:var(--ok-bg); border-color:var(--ok-border); }
   .pill.OVER { color:var(--over); background:var(--over-bg); border-color:var(--over-border); }
   .pill.FULL { color:var(--full); background:var(--full-bg); border-color:var(--full-border); }
   .pill.N-A { color:var(--na); background:var(--na-bg); border-color:var(--na-border); }
   .pct-text { font-weight:700; }
   .pct-text.OK { color:var(--ok); } .pct-text.OVER { color:var(--over); } .pct-text.FULL { color:var(--full); } .pct-text.N-A { color:var(--na); }
-  .note { color:#1d4ed8; font-size:13.5px; margin-top:4px; font-weight:500; }
+  .note { display:block; color:#1d4ed8; font-size:12px; margin-top:2px; font-weight:700; }
   .empty { padding:32px; text-align:center; color:var(--muted); background:#fff; border:1px solid var(--border); border-radius:14px; font-size:15px; }
-  footer { text-align:center; color:var(--muted); font-size:13.5px; padding:24px; }
+  footer { text-align:center; color:var(--muted); font-size:12.5px; padding:20px 0 4px; }
+  .copyright { font-size:11px; color:#9aa5b8; margin-top:14px; padding-top:12px; border-top:1px solid var(--border); text-align:center; letter-spacing:.3px; }
   .row-tooltip { display:none; position:fixed; z-index:1000; background:#fff; border-radius:14px; box-shadow:0 12px 32px rgba(16,24,40,.22); overflow:hidden; min-width:260px; max-width:340px; pointer-events:none; }
-  .row-tooltip .tip-head { padding:12px 16px; color:#fff; }
+  .row-tooltip .tip-head { padding:11px 16px; background:linear-gradient(90deg, var(--lime), var(--lime-2)); color:#fff; }
   .row-tooltip .tip-vessel { font-weight:700; font-size:14.5px; }
   .row-tooltip .tip-vessel span { font-weight:500; opacity:.85; font-size:13px; margin-left:6px; }
   .row-tooltip .tip-meta { font-size:12.5px; opacity:.9; margin-top:2px; }
-  .row-tooltip .tip-head.status-OK { background:var(--ok); }
-  .row-tooltip .tip-head.status-OVER { background:var(--over); }
-  .row-tooltip .tip-head.status-FULL { background:var(--full); }
-  .row-tooltip .tip-head.status-N-A { background:var(--na); }
   .row-tooltip table { width:100%; border-collapse:collapse; font-size:13px; }
-  .row-tooltip th { text-align:left; padding:8px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); background:var(--band); }
+  .row-tooltip th { text-align:left; padding:8px 16px; font-size:11px; text-transform:uppercase; letter-spacing:.04em; color:var(--lime); background:var(--lime-bg); position:static; }
   .row-tooltip td { padding:7px 16px; border-top:1px solid var(--row-line); }
   .row-tooltip th:not(:first-child), .row-tooltip td:not(:first-child) { text-align:right; }
-  .row-tooltip tfoot td { font-weight:700; border-top:2px solid var(--border); color:var(--ink); }
+  .row-tooltip tfoot td { font-weight:800; border-top:2px solid var(--border); color:var(--navy); background:var(--band); }
+  th.g0, td.g0 { background:#f2faff !important; } th.g1, td.g1 { background:#f3fbf6 !important; } th.g2, td.g2 { background:#fef4f9 !important; } th.g3, td.g3 { background:#f9f5fe !important; }
+  th.g0 { color:#0369a1; } th.g1 { color:#15803d; } th.g2 { color:#be185d; } th.g3 { color:#6d28d9; }
+  th.gfirst, td.gfirst { border-left:3px solid #fff; }
+  tbody tr:hover td.g0, tbody tr:hover td.g1, tbody tr:hover td.g2, tbody tr:hover td.g3 { filter:brightness(.97); }
+  @media (max-width:640px) {
+    .wrap { padding:16px 12px 32px; }
+    .hero-inner { padding:16px 18px; flex-direction:column; align-items:flex-start; }
+    .hero h1 { font-size:20px; }
+    .hero-right { width:100%; justify-content:space-between; }
+    .kpi { min-width:44%; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <div class="header-inner">
-    <div class="header-left">
-      <span class="header-dot">&#x1F6A2;</span>
+<div class="wrap">
+  <div class="hero">
+    <div class="hero-inner">
       <div>
-        <h1>BSA Utilization Report</h1>
-        <p>Booking vs BSA - VNSGN - HKHKG - CNXMN - CNSHK - TWKEL - CNSHA - KRPUS - IDJKT -</p>
+        <h1>&#x1F6A2; BSA Utilization Report<span class="upd">(update __GENERATED_AT__)</span></h1>
+        <p class="subtitle">Booking vs BSA &middot; VNSGN &middot; HKHKG &middot; CNXMN &middot; CNSHK &middot; TWKEL &middot; CNSHA &middot; KRPUS &middot; IDJKT</p>
       </div>
-    </div>
-    <div class="header-right">
-      <div class="header-clock">
-        <div class="clock-time" id="clockTime">--:--:--</div>
-        <div class="clock-date" id="clockDate">Loading...</div>
+      <div class="hero-right">
+        <div class="hero-clock">
+          <div class="clock-time" id="clockTime">--:--:--</div>
+          <div class="clock-date" id="clockDate">Loading...</div>
+        </div>
+        <img class="hero-logo" src="logo.png" alt="Company logo">
       </div>
-      <img class="header-logo" src="logo.png" alt="Company logo">
     </div>
   </div>
-</header>
-<div class="wrap">
   <div class="kpis">
     <div class="kpi total"><div class="kpi-icon">&#x1F6A2;</div><div class="num">__TOTAL_LANES__</div><div class="lbl">Vessel sailings</div></div>
     <div class="kpi ok"><div class="kpi-icon">&#x1F534;</div><div class="num">__COUNT_OK__</div><div class="lbl">Dangerous</div></div>
     <div class="kpi full"><div class="kpi-icon">&#x1F7E2;</div><div class="num">__COUNT_FULL__</div><div class="lbl">100% (Full)</div></div>
     <div class="kpi over"><div class="kpi-icon">&#x1F535;</div><div class="num">__COUNT_OVER__</div><div class="lbl">OVER</div></div>
+    <div class="kpi teu"><div class="kpi-icon">&#x1F4E6;</div><div class="num">__TOTAL_TEU__</div><div class="lbl">Lifting TEU</div></div>
+    <div class="kpi reefer"><div class="kpi-icon">&#x2744;&#xFE0F;</div><div class="num">__TOTAL_REEFER__</div><div class="lbl">Reefer plugs</div></div>
   </div>
   <div class="controls">
-    <label for="portSelect">View by destination Port (POD):</label>
-    <select id="portSelect">
-      <option value="__ALL__">All ports (TEU total)</option>
-      __PORT_OPTIONS__
-      <option value="__REEFER__">&#x2744;&#xFE0F; Reefer (Plug) Bookings</option>
-    </select>
-    <label for="statusFilter">Status:</label>
-    <select id="statusFilter">
-      <option value="">All</option>
-      <option value="OK">Dangerous</option>
-      <option value="FULL">Full (100%)</option>
-      <option value="OVER">Over</option>
-    </select>
+    <div class="grp">
+      <label for="portSelect">View by destination (POD)</label>
+      <select id="portSelect">
+        <option value="__ALL__">All ports (TEU total)</option>
+        __PORT_OPTIONS__
+        <option value="__REEFER__">&#x2744;&#xFE0F; Reefer (Plug)</option>
+      </select>
+    </div>
+    <div class="grp" id="statusGrp">
+      <label>Status</label>
+      <div class="seg-control" id="statusToggle">
+        <button type="button" class="seg-btn active" data-status="">All</button>
+        <button type="button" class="seg-btn" data-status="OK">Dangerous</button>
+        <button type="button" class="seg-btn" data-status="FULL">Full</button>
+        <button type="button" class="seg-btn" data-status="OVER">Over</button>
+      </div>
+    </div>
   </div>
   <div id="weeks"></div>
   <div id="reeferSection"></div>
+  <footer>Extraction: openpyxl / xlrd / pdfplumber. Analysis: deterministic Python (no AI). Weeks run Monday&ndash;Sunday.</footer>
+  <div class="copyright">Generated __GENERATED_AT__ &middot; Heung-A Line &middot; booking_dashboard.py</div>
 </div>
-<footer>Extraction: openpyxl / xlrd / pdfplumber. Analysis: deterministic Python (no AI). Weeks run Monday&ndash;Sunday.</footer>
 <div id="rowTooltip" class="row-tooltip"></div>
 
 <script id="dashboard-data" type="application/json">__DATA_JSON__</script>
@@ -974,7 +1007,7 @@ DATA.forEach(block => block.rows.forEach(row => { ROW_LOOKUP[row.vsl + '|' + row
 
 function pill(status, text) {
   const cls = status.replace('/', '-');
-  return `<span class="pill ${cls}">${text}</span>`;
+  return `<span class="pill ${cls}"><span class="dot"></span>${text}</span>`;
 }
 function pctSpan(pct, status) {
   const cls = status.replace('/', '-');
@@ -1000,120 +1033,95 @@ function getPortCell(row, name) {
   return row.ports.find(x => x.port === name) || null;
 }
 
-const GROUP_COLORS = [
-  {head: '#0EA5E9', soft: '#f2faff', softAlt: '#e0f2fe'},
-  {head: '#16A34A', soft: '#f3fbf6', softAlt: '#dcf7e6'},
-  {head: '#DB2777', soft: '#fef4f9', softAlt: '#fbe0ee'},
-  {head: '#7C3AED', soft: '#f9f5fe', softAlt: '#eee0fc'},
-];
-
 function render() {
   const groupKey = document.getElementById('portSelect').value;
   const reeferSection = document.getElementById('reeferSection');
-  const statusFilterEl = document.getElementById('statusFilter');
+  const statusGrp = document.getElementById('statusGrp');
   const root = document.getElementById('weeks');
 
   if (groupKey === '__REEFER__') {
     root.innerHTML = '';
-    statusFilterEl.style.display = 'none';
-    statusFilterEl.previousElementSibling.style.display = 'none';
+    statusGrp.style.display = 'none';
     renderReefer();
     reeferSection.style.display = '';
     return;
   }
-  statusFilterEl.style.display = '';
-  statusFilterEl.previousElementSibling.style.display = '';
+  statusGrp.style.display = '';
   reeferSection.style.display = 'none';
   reeferSection.innerHTML = '';
 
   const group = PORT_GROUPS.find(g => g.key === groupKey);
-  const statusFilter = statusFilterEl.value;
+  const statusFilter = currentStatus;
+  const todayStr = new Date().toISOString().slice(0, 10);
   root.innerHTML = '';
 
-  // Builds the style for one cell inside a coloured port-group block: a
-  // small white gap + rounded corner between groups, and (on the header or
-  // the last body row) a rounded outer edge so each group reads as a
-  // soft rounded "chip" rather than a sharp rectangle.
-  function groupCellStyle(bg, isFirstInGroup, isLastInGroup, isLastGroup, roundTop, roundBottom) {
-    let s = `background:${bg};`;
-    if (!isLastGroup && isLastInGroup) s += 'border-right:4px solid #fff;';
-    const tl = roundTop && isFirstInGroup ? '10px' : '0';
-    const tr = roundTop && isLastInGroup ? '10px' : '0';
-    const br = roundBottom && isLastInGroup ? '10px' : '0';
-    const bl = roundBottom && isFirstInGroup ? '10px' : '0';
-    s += `border-radius:${tl} ${tr} ${br} ${bl};`;
-    return s;
-  }
+  const GC = ['g0', 'g1', 'g2', 'g3'];
 
   DATA.forEach(block => {
     const renderedRows = [];
-    let rowIndex = 0;
     block.rows.forEach(row => {
       if (statusFilter && row.status !== statusFilter) return;
-      renderedRows.push({row, portCells: null});
       if (group) {
         const cells = group.ports.map(p => getPortCell(row, p));
-        if (!cells.some(Boolean)) { renderedRows.pop(); return; }
-        renderedRows[renderedRows.length - 1].portCells = cells;
-        renderedRows[renderedRows.length - 1].shade = rowIndex % 2 === 0 ? 'soft' : 'softAlt';
+        if (!cells.some(Boolean)) return;
+        renderedRows.push({row, portCells: cells});
+      } else {
+        renderedRows.push({row, portCells: null});
       }
-      rowIndex++;
     });
     if (!renderedRows.length) return;
 
+    const overCount = renderedRows.filter(e => e.row.status === 'OVER').length;
+    const teuSum = renderedRows.reduce((a, e) => a + (e.row.lifting || 0), 0);
+
     // In a specific-port view, drop the overall BSA/ALLO/LIFTING/% columns
-    // (already visible in "All ports") and collapse each port's Allo+Actual
-    // into one cell, so the whole picture fits without horizontal scrolling.
-    const rowsHtml = renderedRows.map((entry, ri) => {
-      const {row, portCells, shade} = entry;
-      const isLastRow = ri === renderedRows.length - 1;
+    // (already visible in "All ports") and collapse to Vessel/ETD/Status +
+    // each port's Allo/Actual/% (pastel-tinted g0-g3 columns), so the whole
+    // picture fits without horizontal scrolling.
+    const rowsHtml = renderedRows.map(entry => {
+      const {row, portCells} = entry;
+      const past = row.etd && row.etd < todayStr ? ' past' : '';
+      const notesHtml = row.notes.length ? `<span class="note">USE 60% (slot-share: ${row.notes.join('; ')})</span>` : '';
+      const vesselTd = `<td class="vessel wrap-cell">${row.vesselName}<span class="code">${row.vsl} ${row.voy}</span>${notesHtml}</td>`;
+      const etdTd = `<td class="etd">${row.etd || 'N/A'}</td>`;
       let portCellsHtml = '';
       let baseCellsHtml;
       if (group) {
         portCellsHtml = group.ports.map((p, i) => {
           const c = portCells[i];
-          const bg = GROUP_COLORS[i % GROUP_COLORS.length][shade];
-          const isLast = i === group.ports.length - 1;
-          const sAllo = `style="${groupCellStyle(bg, true, false, isLast, false, isLastRow)}"`;
-          const sMid = `style="background:${bg};"`;
-          const sPct = `style="${groupCellStyle(bg, false, true, isLast, false, isLastRow)}"`;
-          if (!c) return `<td ${sAllo}>N/A</td><td ${sMid}>-</td><td ${sPct}>N/A</td>`;
+          const g = GC[i % GC.length];
+          if (!c) return `<td class="${g} gfirst">N/A</td><td class="${g}">-</td><td class="${g}">N/A</td>`;
           const allo = c.allo === null || c.allo === undefined ? 'N/A' : c.allo;
-          return `<td ${sAllo}>${allo}</td><td ${sMid}>${c.actual}</td><td ${sPct}>${pctSpan(c.pct, c.status)}</td>`;
+          return `<td class="${g} gfirst">${allo}</td><td class="${g}">${c.actual}</td><td class="${g}">${pctSpan(c.pct, c.status)}</td>`;
         }).join('');
-        baseCellsHtml = `
-        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
-        <td>${row.etd || 'N/A'}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
+        baseCellsHtml = `${vesselTd}${etdTd}<td>${pill(row.status, statusLabel(row.status))}</td>`;
       } else {
         baseCellsHtml = `
-        <td>${row.svc}</td>
-        <td class="wrap-cell">${row.vessel}${row.notes.length ? `<div class="note">USE 60% (slot-share: ${row.notes.join('; ')})</div>` : ''}</td>
-        <td>${row.etd || 'N/A'}</td>
+        <td class="svc">${row.svc}</td>${vesselTd}${etdTd}
         <td>${row.bsaFull === null || row.bsaFull === undefined ? 'N/A' : row.bsaFull}</td>
         <td>${row.bsaAllo === null || row.bsaAllo === undefined ? 'N/A' : row.bsaAllo}</td>
         <td>${row.lifting}</td>
         <td>${pctSpan(row.pctTeu, row.status)}</td>
-        <td>${pill(row.status, statusIcon(row.status) + ' ' + statusLabel(row.status))}</td>`;
+        <td>${pill(row.status, statusLabel(row.status))}</td>`;
       }
-      return `<tr class="tip-row" data-tip-key="${row.vsl}|${row.voy}">${baseCellsHtml}${portCellsHtml}</tr>`;
+      return `<tr class="tip-row${past}" data-tip-key="${row.vsl}|${row.voy}">${baseCellsHtml}${portCellsHtml}</tr>`;
     }).join('');
 
     const portHeadHtml = !group ? '' :
       group.ports.map((p, i) => {
-        const c = GROUP_COLORS[i % GROUP_COLORS.length];
-        const isLast = i === group.ports.length - 1;
-        const sFirst = `style="color:#fff;${groupCellStyle(c.head, true, false, isLast, true, false)}"`;
-        const sMid = `style="background:${c.head};color:#fff;"`;
-        const sLast = `style="color:#fff;${groupCellStyle(c.head, false, true, isLast, true, false)}"`;
-        return `<th ${sFirst}>${p} Allo</th><th ${sMid}>${p} Actual</th><th ${sLast}>${p} %</th>`;
+        const g = GC[i % GC.length];
+        return `<th class="${g} gfirst">${p} Allo</th><th class="${g}">${p} Actual</th><th class="${g}">${p} %</th>`;
       }).join('');
     const theadHtml = !group
       ? `<th>SVC</th><th>Vessel / Voyage</th><th>ETD</th><th>BSA</th><th>ALLO</th><th>LIFTING</th><th>%</th><th>Status</th>`
       : `<th>Vessel / Voyage</th><th>ETD</th><th>Status</th>${portHeadHtml}`;
+    const overBadge = overCount ? `<span class="warn">${overCount} OVER</span>` : '';
     root.insertAdjacentHTML('beforeend', `
       <div class="week">
-        <div class="week-head"><span>${block.label}</span><span class="range">${block.range}</span></div>
+        <div class="week-head">
+          <span>${block.label}<span class="range">${block.range}</span></span>
+          <span class="wk-stat"><span>${renderedRows.length} sailings</span><span>${teuSum.toFixed(0)} TEU</span>${overBadge}</span>
+        </div>
         <div class="table-scroll">
         <table class="${group ? 'compact' : ''}">
           <thead><tr>${theadHtml}</tr></thead>
@@ -1127,8 +1135,16 @@ function render() {
   }
 }
 
+let currentStatus = '';
 document.getElementById('portSelect').addEventListener('change', render);
-document.getElementById('statusFilter').addEventListener('change', render);
+document.querySelectorAll('#statusToggle .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#statusToggle .seg-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentStatus = btn.dataset.status;
+    render();
+  });
+});
 render();
 
 function renderReefer() {
@@ -1142,16 +1158,16 @@ function renderReefer() {
     const portCells = REEFER.ports.map(p => `<td>${r.ports[p] || 0}</td>`).join('');
     return `<tr>
       <td>${r.week}</td>
-      <td>${r.svc}</td>
-      <td class="wrap-cell">${r.vessel}</td>
-      <td>${r.etd || 'N/A'}</td>
-      <td><strong>${r.total}</strong></td>
+      <td class="svc">${r.svc}</td>
+      <td class="vessel wrap-cell">${r.vesselName}<span class="code">${r.vsl} ${r.voy}</span></td>
+      <td class="etd">${r.etd || 'N/A'}</td>
+      <td style="font-weight:800;color:#0e7490">${r.total}</td>
       ${portCells}
     </tr>`;
   }).join('');
   root.innerHTML = `
     <div class="week">
-      <div class="week-head"><span>&#x2744;&#xFE0F; Reefer (Plug) Bookings</span><span class="range">Every sailing carrying at least one reefer container</span></div>
+      <div class="week-head"><span>&#x2744;&#xFE0F; Reefer (Plug) Bookings<span class="range">Every sailing carrying at least one reefer container</span></span></div>
       <div class="table-scroll">
       <table>
         <thead><tr>
@@ -1166,13 +1182,12 @@ function renderReefer() {
 const tooltipEl = document.getElementById('rowTooltip');
 
 function showTooltip(row, e) {
-  const cls = row.status.replace('/', '-');
   const podRows = row.podBreakdown.rows.map(pr =>
     `<tr><td>${pr.label}</td><td>${pr.c20}</td><td>${pr.c40}</td><td>${pr.teu}</td></tr>`
   ).join('');
   const t = row.podBreakdown.total;
   tooltipEl.innerHTML = `
-    <div class="tip-head status-${cls}">
+    <div class="tip-head">
       <div class="tip-vessel">${row.vesselName}<span>${row.vsl} ${row.voy}</span></div>
       <div class="tip-meta">${row.bookingCount} bookings &middot; ETD ${row.etd || 'N/A'}</div>
     </div>
@@ -1220,8 +1235,9 @@ document.addEventListener('mouseout', e => {
     hideTooltip();
   }
 });
-['portSelect', 'statusFilter'].forEach(id => {
-  document.getElementById(id).addEventListener('change', () => { currentTipKey = null; hideTooltip(); });
+document.getElementById('portSelect').addEventListener('change', () => { currentTipKey = null; hideTooltip(); });
+document.querySelectorAll('#statusToggle .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => { currentTipKey = null; hideTooltip(); });
 });
 
 function tickClock() {
@@ -1243,6 +1259,8 @@ setInterval(tickClock, 1000);
     html = html.replace("__COUNT_OK__", str(counts["OK"]))
     html = html.replace("__COUNT_FULL__", str(counts["FULL"]))
     html = html.replace("__COUNT_OVER__", str(counts["OVER"]))
+    html = html.replace("__TOTAL_TEU__", f"{total_teu:,.0f}")
+    html = html.replace("__TOTAL_REEFER__", f"{total_reefer:,}")
     html = html.replace("__PORT_OPTIONS__", port_options)
     html = html.replace("__DATA_JSON__", json.dumps(payload, ensure_ascii=False))
     html = html.replace("__PORT_GROUPS_JSON__", json.dumps(port_groups_js, ensure_ascii=False))

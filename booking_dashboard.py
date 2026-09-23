@@ -135,7 +135,15 @@ SKED_SIGNATURE = {"Service", "Vessel Name", "Vyg Bound"}
 BOOKING_SIGNATURE = {"VSL", "VOY", "TEU", "POD"}
 
 
-def find_sked_file():
+def find_all_sked_files():
+    """Every SKED-signature file in input/, oldest to newest by mtime.
+
+    Each new schedule export only lists currently-active/upcoming voyages --
+    a vessel that has already sailed drops out of it entirely. Since the
+    report keeps a short recent-history window (PAST_SAILING_LOOKBACK_DAYS),
+    a voyage still inside that window can be missing from the *latest*
+    export but present in an older one, so every export found is parsed and
+    merged (see parse_sked_files) rather than trusting only the newest."""
     bsa_file = find_bsa_file()
     candidates = []
     for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*")):
@@ -150,15 +158,15 @@ def find_sked_file():
         raise FileNotFoundError(
             f"No schedule file (columns {sorted(SKED_SIGNATURE)}) found in {INPUT_FOLDER}"
         )
-    return _latest(candidates)
+    return sorted(candidates, key=os.path.getmtime)
 
 
 def find_master_booking_file():
     bsa_file = find_bsa_file()
-    sked_file = find_sked_file()
+    sked_files = set(find_all_sked_files())
     candidates = []
     for p in glob.glob(os.path.join(INPUT_FOLDER, "*.xls*")):
-        if os.path.basename(p).startswith("~$") or p in (bsa_file, sked_file):
+        if os.path.basename(p).startswith("~$") or p == bsa_file or p in sked_files:
             continue
         try:
             if BOOKING_SIGNATURE.issubset(_read_header_row(p)):
@@ -261,6 +269,18 @@ def parse_sked(path):
             "slot_share": bool(str(used).strip()),
             "slot_share_label": str(used).strip(),
         }
+    return lookup
+
+
+def parse_sked_files(paths):
+    """Merge parse_sked() over every schedule export found (oldest first,
+    each newer file's entries overwriting older ones on key conflicts), so a
+    voyage that has aged out of the newest "current schedule" export but is
+    still inside the report's recent-history window keeps its Service/
+    vessel-name/ETD from whichever older export last had it."""
+    lookup = {}
+    for path in paths:
+        lookup.update(parse_sked(path))
     return lookup
 
 
@@ -1424,16 +1444,16 @@ setInterval(tickClock, 1000);
 
 def main():
     bsa_file = find_bsa_file()
-    sked_file = find_sked_file()
+    sked_files = find_all_sked_files()
     master_file = find_master_booking_file()
     print(f"BSA file:     {os.path.basename(bsa_file)}")
-    print(f"SKED file:    {os.path.basename(sked_file)}")
+    print(f"SKED files:   {', '.join(os.path.basename(p) for p in sked_files)} (merged, newest wins on overlap)")
     print(f"Master file:  {os.path.basename(master_file)}")
 
     extract_pdf_texts()  # no-op today; picks up any future PDF drops
 
     bsa = parse_bsa(bsa_file)
-    sked_lookup = parse_sked(sked_file)
+    sked_lookup = parse_sked_files(sked_files)
     bookings = parse_bookings(master_file)
     print(f"Parsed {len(bookings)} booking lines, {len(sked_lookup)} scheduled sailings, {len(bsa)} BSA lanes.")
 

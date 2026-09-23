@@ -91,6 +91,11 @@ WEIGHT_DIVISOR = 1000.0  # booking weight is in kg; report weight in metric tons
 # capped at this fraction of the full BSA. Weight is not affected.
 SLOT_SHARE_TEU_FACTOR = 0.6
 
+# Each run drops sailings older than this many days before today, so the
+# report always shows a short recent-history window plus everything
+# upcoming, instead of only today-forward.
+PAST_SAILING_LOOKBACK_DAYS = 2
+
 # ---------------------------------------------------------------------------
 # File discovery
 # ---------------------------------------------------------------------------
@@ -510,12 +515,13 @@ def build_analysis(bookings, sked_lookup, bsa):
             "slot_share_label": sked["slot_share_label"] if sked else "",
         })
 
-    # Drop sailings that have already departed (ETD before today) -- this is
-    # a recurring daily report, so each run should only show what's still
-    # actionable. Sailings with no resolvable ETD are kept (there's nothing
-    # to compare against "today"), not silently dropped.
-    today = datetime.now().date()
-    sailing_records = [r for r in sailing_records if r["etd"] is None or r["etd"].date() >= today]
+    # Drop sailings older than a rolling 2-day lookback (ETD before
+    # today - 2 days) -- this is a recurring daily report, so each run
+    # should only show what's still actionable plus a short recent-history
+    # window. Sailings with no resolvable ETD are kept (there's nothing to
+    # compare against the cutoff), not silently dropped.
+    cutoff_date = datetime.now().date() - timedelta(days=PAST_SAILING_LOOKBACK_DAYS)
+    sailing_records = [r for r in sailing_records if r["etd"] is None or r["etd"].date() >= cutoff_date]
 
     # Step 2: group sailings by ISO week (Mon-Sun) of ETD. Each vessel sailing
     # gets its own row -- compared against its lane's full BSA quota on its
